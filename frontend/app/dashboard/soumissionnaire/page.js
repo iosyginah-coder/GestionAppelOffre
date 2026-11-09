@@ -2,785 +2,1870 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import {
   Search,
   RefreshCw,
   FileText,
   CalendarDays,
   MapPin,
-  Building2,
+  Send,
+  X,
+  CheckCircle2,
+  AlertCircle,
+  Clock3,
+  ClipboardList,
   LogOut,
   Menu,
-  X,
-  Eye,
-  Clock,
-  Megaphone,
-  AlertCircle,
-  CheckCircle2,
+  Building2,
+  FileCheck2,
   ChevronRight,
-  Tag,
-  User,
-  Bell,
+  Upload,
+  Receipt,
 } from "lucide-react";
 
 import "../../css/soumissionnaire.css";
 
-const API_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+const API_BASE = (
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080"
+).replace(/\/$/, "");
 
-function obtenirListe(data) {
-  if (Array.isArray(data)) return data;
-  if (Array.isArray(data?.content)) return data.content;
-  if (Array.isArray(data?.data)) return data.data;
-  if (Array.isArray(data?.appelsOffres)) return data.appelsOffres;
-  if (Array.isArray(data?.resultats)) return data.resultats;
-  return [];
+const MAX_FILE_SIZE = 10 * 1024 * 1024;
+
+const ALLOWED_EXTENSIONS = [
+  "pdf",
+  "doc",
+  "docx",
+  "xls",
+  "xlsx",
+  "jpg",
+  "jpeg",
+  "png",
+];
+
+/* =====================================================
+   FONCTION API
+===================================================== */
+
+async function apiRequest(path, options = {}) {
+  const isFormData =
+    typeof FormData !== "undefined" &&
+    options.body instanceof FormData;
+
+  const response = await fetch(`${API_BASE}${path}`, {
+    credentials: "include",
+    ...options,
+    headers: {
+      ...(isFormData ? {} : { "Content-Type": "application/json" }),
+      ...(options.headers || {}),
+    },
+  });
+
+  const contentType = response.headers.get("content-type") || "";
+
+  const data = contentType.includes("application/json")
+    ? await response.json().catch(() => null)
+    : await response.text().catch(() => "");
+
+  if (!response.ok) {
+    let message = `Erreur HTTP ${response.status}`;
+
+    if (typeof data === "string" && data.trim()) {
+      message = data;
+    } else if (data?.message) {
+      message = data.message;
+    } else if (data?.error) {
+      message = data.error;
+    }
+
+    throw new Error(message);
+  }
+
+  return data;
 }
 
-function formatDate(date) {
-  if (!date) return "Non précisée";
+/* =====================================================
+   FONCTIONS UTILITAIRES
+===================================================== */
 
-  const valeur = new Date(date);
+function getAppelId(appel) {
+  return (
+    appel?.idAppelOffre ??
+    appel?.id_appel_offre ??
+    appel?.id
+  );
+}
 
-  if (Number.isNaN(valeur.getTime())) return "Non précisée";
+function getPieceId(piece) {
+  return (
+    piece?.idPiece ??
+    piece?.id_piece ??
+    piece?.id
+  );
+}
 
-  return valeur.toLocaleDateString("fr-FR", {
-    day: "2-digit",
-    month: "long",
-    year: "numeric",
+function getCritereId(item) {
+  return (
+    item?.critere?.idCritere ??
+    item?.critere?.id_critere ??
+    item?.idCritere ??
+    item?.id_critere ??
+    item?.critereEvaluation?.idCritere
+  );
+}
+
+function getOffreId(offre) {
+  return (
+    offre?.idOffre ??
+    offre?.id_offre ??
+    offre?.id
+  );
+}
+
+function getAccuse(offre) {
+  return (
+    offre?.accuseDeReception ??
+    offre?.accuse_de_reception ??
+    "Non disponible"
+  );
+}
+
+function getDateDepot(offre) {
+  return (
+    offre?.dateDepot ??
+    offre?.date_depot ??
+    null
+  );
+}
+
+function getAppelFromOffre(offre) {
+  return (
+    offre?.appelOffre ??
+    offre?.appel_offre ??
+    null
+  );
+}
+
+function formatDate(value) {
+  if (!value) return "Non renseignée";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+
+  return date.toLocaleString("fr-FR", {
+    dateStyle: "medium",
+    timeStyle: "short",
   });
 }
 
-function valeurTexte(valeur, defaut = "Non renseigné") {
-  if (valeur === null || valeur === undefined || valeur === "") {
-    return defaut;
+function formatMoney(value) {
+  if (
+    value === null ||
+    value === undefined ||
+    value === ""
+  ) {
+    return "Non communiqué";
   }
 
-  if (typeof valeur === "object") {
-    return (
-      valeur.libelle ||
-      valeur.nom ||
-      valeur.nomCategorie ||
-      valeur.nomCategorieMarche ||
-      valeur.type ||
-      defaut
-    );
+  const number = Number(value);
+
+  if (!Number.isFinite(number)) {
+    return "Non communiqué";
   }
 
-  return String(valeur);
+  return `${new Intl.NumberFormat("fr-FR", {
+    maximumFractionDigits: 2,
+  }).format(number)} Ar`;
 }
 
+function isAppelOpen(appel) {
+  const dateLimite =
+    appel?.dateLimiteDepot ??
+    appel?.date_limite_depot;
+
+  if (!dateLimite) return true;
+
+  const limit = new Date(dateLimite);
+
+  return (
+    !Number.isNaN(limit.getTime()) &&
+    limit.getTime() > Date.now()
+  );
+}
+
+function getFileExtension(filename) {
+  return String(filename || "")
+    .split(".")
+    .pop()
+    .toLowerCase();
+}
+
+/* =====================================================
+   PAGE SOUMISSIONNAIRE
+===================================================== */
+
 export default function SoumissionnairePage() {
-  const router = useRouter();
+  const [session, setSession] = useState(null);
 
   const [appels, setAppels] = useState([]);
-  const [utilisateur, setUtilisateur] = useState(null);
-  const [recherche, setRecherche] = useState("");
-  const [filtreCategorie, setFiltreCategorie] = useState("TOUS");
-  const [chargement, setChargement] = useState(true);
-  const [erreur, setErreur] = useState("");
-  const [actualisation, setActualisation] = useState(false);
-  const [appelSelectionne, setAppelSelectionne] = useState(null);
-  const [menuOuvert, setMenuOuvert] = useState(false);
+  const [pieces, setPieces] = useState([]);
+  const [criteres, setCriteres] = useState([]);
 
-  const chargerAppels = useCallback(async (silencieux = false) => {
+  const [mesOffres, setMesOffres] = useState([]);
+
+  const [selected, setSelected] = useState(null);
+
+  const [loading, setLoading] = useState(true);
+  const [loadingOffres, setLoadingOffres] = useState(false);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  const [search, setSearch] = useState("");
+  const [typeFilter, setTypeFilter] = useState("TOUS");
+
+  const [activeTab, setActiveTab] = useState("appels");
+  const [mobileMenu, setMobileMenu] = useState(false);
+
+  const [showDeposit, setShowDeposit] = useState(false);
+
+  const [montant, setMontant] = useState("");
+  const [filesByPiece, setFilesByPiece] = useState({});
+
+  const [notice, setNotice] = useState({
+    type: "",
+    message: "",
+  });
+
+  /* =====================================================
+     CHARGER LES APPELS D'OFFRES
+  ===================================================== */
+
+  const loadAppels = useCallback(async () => {
+    setLoading(true);
+    setNotice({ type: "", message: "" });
+
     try {
-      if (!silencieux) setChargement(true);
+      const [sessionData, appelsData] = await Promise.all([
+        apiRequest("/api/auth/session"),
 
-      setErreur("");
+        apiRequest(
+          "/api/appel-offres/soumissionnaire/publications"
+        ),
+      ]);
 
-      const response = await fetch(
-        `${API_URL}/api/appel-offres/publies`,
+      if (
+        sessionData?.role &&
+        sessionData.role !== "SOUMISSIONNAIRE"
+      ) {
+        throw new Error(
+          "Cette page est réservée au rôle SOUMISSIONNAIRE."
+        );
+      }
+
+      setSession(sessionData);
+
+      const liste = Array.isArray(appelsData)
+        ? appelsData
+        : [];
+
+      setAppels(
+        liste.filter(
+          (appel) =>
+            String(appel?.statut || "").toUpperCase() ===
+              "PUBLIE" &&
+            isAppelOpen(appel)
+        )
+      );
+    } catch (error) {
+      setNotice({
+        type: "error",
+        message:
+          error.message ||
+          "Impossible de charger les appels d'offres.",
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  /* =====================================================
+     CHARGER MES DEPOTS
+  ===================================================== */
+
+  const loadMesOffres = useCallback(async () => {
+    setLoadingOffres(true);
+
+    try {
+      const data = await apiRequest(
+        "/api/offres/mes-offres"
+      );
+
+      setMesOffres(
+        Array.isArray(data) ? data : []
+      );
+    } catch (error) {
+      setMesOffres([]);
+
+      setNotice({
+        type: "error",
+        message:
+          error.message ||
+          "Impossible de charger vos dépôts.",
+      });
+    } finally {
+      setLoadingOffres(false);
+    }
+  }, []);
+
+  /* =====================================================
+     CHARGEMENT INITIAL
+  ===================================================== */
+
+  useEffect(() => {
+    loadAppels();
+  }, [loadAppels]);
+
+  /* =====================================================
+     RECHERCHE ET FILTRE
+  ===================================================== */
+
+  const filteredAppels = useMemo(() => {
+    const term = search.trim().toLowerCase();
+
+    return appels.filter((appel) => {
+      const matchesSearch =
+        !term ||
+        [
+          appel.reference,
+          appel.objet,
+          appel.description,
+          appel.lieuExecution,
+        ].some((value) =>
+          String(value || "")
+            .toLowerCase()
+            .includes(term)
+        );
+
+      const type = String(
+        appel.typeMarche || ""
+      ).toUpperCase();
+
+      const matchesType =
+        typeFilter === "TOUS" ||
+        type === typeFilter;
+
+      return matchesSearch && matchesType;
+    });
+  }, [appels, search, typeFilter]);
+
+  /* =====================================================
+     CONSULTER UN APPEL D'OFFRES
+  ===================================================== */
+
+  async function openDetail(appel) {
+    const id = getAppelId(appel);
+
+    if (!id) {
+      setNotice({
+        type: "error",
+        message:
+          "Identifiant de l'appel d'offres introuvable.",
+      });
+
+      return;
+    }
+
+    setDetailLoading(true);
+    setNotice({ type: "", message: "" });
+
+    try {
+      const detail = await apiRequest(
+        `/api/appel-offres/soumissionnaire/publications/${id}`
+      );
+
+      const [piecesData, criteresData] =
+        await Promise.all([
+          apiRequest(
+            `/api/pieces-requises/appel-offre/${id}`
+          ),
+
+          apiRequest(
+            "/api/appel-offre-criteres"
+          ).catch(() => []),
+        ]);
+
+      const listePieces = Array.isArray(piecesData)
+        ? piecesData
+        : [];
+
+      // Vérifier que les pièces reçues correspondent
+      // bien à l'appel d'offres sélectionné.
+      const piecesCorrectes = listePieces.filter((piece) => {
+        const pieceAppelId =
+          piece?.appelOffre?.idAppelOffre ??
+          piece?.appelOffre?.id_appel_offre ??
+          piece?.idAppelOffre ??
+          piece?.id_appel_offre;
+
+        // Si le backend ne retourne pas la relation,
+        // on conserve les résultats de la route filtrée.
+        if (pieceAppelId == null) return true;
+
+        return Number(pieceAppelId) === Number(id);
+      });
+
+      setSelected(detail);
+
+      setPieces(piecesCorrectes);
+
+      const listeCriteres = Array.isArray(criteresData)
+        ? criteresData
+        : [];
+
+      setCriteres(
+        listeCriteres.filter((row) => {
+          const appelId =
+            row?.appelOffre?.idAppelOffre ??
+            row?.appelOffre?.id_appel_offre ??
+            row?.appelOffre?.id;
+
+          return Number(appelId) === Number(id);
+        })
+      );
+
+      setFilesByPiece({});
+    } catch (error) {
+      setNotice({
+        type: "error",
+        message:
+          error.message ||
+          "Impossible de consulter cet appel d'offres.",
+      });
+    } finally {
+      setDetailLoading(false);
+    }
+  }
+
+  /* =====================================================
+     OUVRIR LA FENETRE DE DEPOT
+  ===================================================== */
+
+  function openDeposit() {
+    if (!selected) {
+      setNotice({
+        type: "error",
+        message:
+          "Veuillez d'abord sélectionner un appel d'offres.",
+      });
+
+      return;
+    }
+
+    if (!isAppelOpen(selected)) {
+      setNotice({
+        type: "error",
+        message:
+          "La date limite de dépôt est dépassée.",
+      });
+
+      return;
+    }
+
+    setMontant("");
+    setFilesByPiece({});
+    setNotice({ type: "", message: "" });
+
+    setShowDeposit(true);
+  }
+
+  /* =====================================================
+     ENVOYER UNE OFFRE AVEC DOCUMENTS
+  ===================================================== */
+
+  async function submitOffer(event) {
+    event.preventDefault();
+
+    if (submitting) return;
+
+    if (!selected) {
+      setNotice({
+        type: "error",
+        message: "Aucun appel d'offres sélectionné.",
+      });
+
+      return;
+    }
+
+    const appelId = Number(getAppelId(selected));
+
+    if (!Number.isInteger(appelId) || appelId <= 0) {
+      setNotice({
+        type: "error",
+        message: "Identifiant de l'appel d'offres invalide.",
+      });
+
+      return;
+    }
+
+    if (!isAppelOpen(selected)) {
+      setNotice({
+        type: "error",
+        message: "La date limite de dépôt est dépassée.",
+      });
+
+      return;
+    }
+
+    const amount = Number(montant);
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setNotice({
+        type: "error",
+        message: "Saisis un montant supérieur à zéro.",
+      });
+
+      return;
+    }
+
+    // Vérifier les pièces et leurs identifiants.
+    const idsDejaVus = new Set();
+
+    for (const piece of pieces) {
+      const pieceId = Number(getPieceId(piece));
+
+      if (!Number.isInteger(pieceId) || pieceId <= 0) {
+        setNotice({
+          type: "error",
+          message:
+            "Une pièce justificative possède un identifiant invalide.",
+        });
+
+        return;
+      }
+
+      if (idsDejaVus.has(pieceId)) {
+        setNotice({
+          type: "error",
+          message:
+            "Une pièce justificative est présente plusieurs fois.",
+        });
+
+        return;
+      }
+
+      idsDejaVus.add(pieceId);
+
+      const pieceAppelId =
+        piece?.appelOffre?.idAppelOffre ??
+        piece?.appelOffre?.id_appel_offre ??
+        piece?.idAppelOffre ??
+        piece?.id_appel_offre;
+
+      if (
+        pieceAppelId != null &&
+        Number(pieceAppelId) !== appelId
+      ) {
+        setNotice({
+          type: "error",
+          message:
+            `La pièce "${piece.nomPiece}" ne correspond pas à cet appel d'offres.`,
+        });
+
+        return;
+      }
+    }
+
+    // Vérifier les pièces obligatoires.
+    const missingPieces = pieces.filter((piece) => {
+      const id = getPieceId(piece);
+
+      return (
+        piece.obligatoire === true &&
+        !filesByPiece[id]
+      );
+    });
+
+    if (missingPieces.length > 0) {
+      setNotice({
+        type: "error",
+        message:
+          "Ajoute les pièces obligatoires : " +
+          missingPieces
+            .map((piece) => piece.nomPiece)
+            .join(", "),
+      });
+
+      return;
+    }
+
+    // Vérifier les fichiers.
+    for (const piece of pieces) {
+      const file = filesByPiece[getPieceId(piece)];
+
+      if (!file) continue;
+
+      const extension = getFileExtension(file.name);
+
+      if (!ALLOWED_EXTENSIONS.includes(extension)) {
+        setNotice({
+          type: "error",
+          message:
+            `Format non accepté pour ${piece.nomPiece}.`,
+        });
+
+        return;
+      }
+
+      if (file.size > MAX_FILE_SIZE) {
+        setNotice({
+          type: "error",
+          message:
+            `Le fichier ${file.name} dépasse la limite de 10 Mo.`,
+        });
+
+        return;
+      }
+    }
+
+    // Construire les données multipart.
+    const formData = new FormData();
+
+    formData.append(
+      "idAppelOffre",
+      String(appelId)
+    );
+
+    formData.append(
+      "montant",
+      String(amount)
+    );
+
+    let nombreFichiers = 0;
+
+    /*
+     * IMPORTANT :
+     * Chaque idsPieces correspond au fichier situé
+     * à la même position dans fichiers.
+     *
+     * Exemple :
+     * idsPieces = [1, 2]
+     * fichiers  = [cv.pdf, nif.pdf]
+     */
+
+    for (const piece of pieces) {
+      const pieceId = Number(getPieceId(piece));
+      const file = filesByPiece[pieceId];
+
+      if (file) {
+        formData.append(
+          "idsPieces",
+          String(pieceId)
+        );
+
+        formData.append(
+          "fichiers",
+          file
+        );
+
+        nombreFichiers++;
+      }
+    }
+
+    if (nombreFichiers === 0 && pieces.some(
+      (piece) => piece.obligatoire === true
+    )) {
+      setNotice({
+        type: "error",
+        message:
+          "Aucun document obligatoire n'a été sélectionné.",
+      });
+
+      return;
+    }
+
+    setSubmitting(true);
+    setNotice({ type: "", message: "" });
+
+    try {
+      /*
+       * Une seule requête envoie :
+       * - idAppelOffre
+       * - montant
+       * - idsPieces
+       * - fichiers
+       *
+       * Le backend enregistre l'offre,
+       * les documents et l'accusé de réception.
+       */
+
+      const created = await apiRequest(
+        "/api/offres/deposer",
         {
-          method: "GET",
-          credentials: "include",
-          headers: {
-            Accept: "application/json",
-          },
-          cache: "no-store",
+          method: "POST",
+          body: formData,
         }
       );
 
-      if (response.status === 401 || response.status === 403) {
+      const createdId = getOffreId(created);
+
+      if (!created || !createdId) {
         throw new Error(
-          "Vous n'avez pas l'autorisation de consulter les appels d'offres."
+          "Le backend n'a pas retourné l'identifiant de l'offre créée."
         );
       }
 
-      if (!response.ok) {
-        throw new Error(
-          `Impossible de charger les publications (${response.status}).`
-        );
-      }
+      const accuse = getAccuse(created);
 
-      const data = await response.json();
-      const liste = obtenirListe(data);
+      setShowDeposit(false);
+      setMontant("");
+      setFilesByPiece({});
 
-      const publications = liste.filter((appel) => {
-        const statut = String(appel.statut || "")
-          .trim()
-          .toUpperCase();
-
-        return statut === "PUBLIE";
+      setNotice({
+        type: "success",
+        message:
+          "Votre offre a été déposée avec succès. Accusé de réception : " +
+          accuse,
       });
 
-      publications.sort((a, b) => {
-        const dateA = new Date(
-          a.datePublication || a.dateCreation || 0
-        ).getTime();
+      // Actualiser l'historique.
+      await loadMesOffres();
 
-        const dateB = new Date(
-          b.datePublication || b.dateCreation || 0
-        ).getTime();
+      // Afficher directement l'historique.
+      setActiveTab("mes-offres");
+      setSelected(null);
 
-        return dateB - dateA;
-      });
-
-      setAppels(publications);
     } catch (error) {
-      setErreur(
-        error.message ||
-          "Une erreur est survenue lors du chargement des publications."
+      console.error(
+        "Erreur lors du dépôt de l'offre :",
+        error
       );
-    } finally {
-      setChargement(false);
-      setActualisation(false);
-    }
-  }, []);
 
-  const chargerUtilisateur = useCallback(async () => {
-    try {
-      const response = await fetch(`${API_URL}/api/auth/session`, {
-        method: "GET",
-        credentials: "include",
-        headers: {
-          Accept: "application/json",
-        },
-        cache: "no-store",
+      setNotice({
+        type: "error",
+        message:
+          error.message ||
+          "Le dépôt de l'offre et des documents a échoué.",
       });
-
-      if (response.ok) {
-        const data = await response.json();
-        setUtilisateur(data.utilisateur || data.user || data);
-      }
-    } catch (error) {
-      console.error("Erreur de session :", error);
+    } finally {
+      setSubmitting(false);
     }
-  }, []);
+  }
 
-  useEffect(() => {
-    chargerAppels();
-    chargerUtilisateur();
-  }, [chargerAppels, chargerUtilisateur]);
+  /* =====================================================
+     DECONNEXION
+  ===================================================== */
 
-  const actualiser = async () => {
-    setActualisation(true);
-    await chargerAppels(true);
-  };
-
-  const deconnexion = async () => {
+  async function logout() {
     try {
-      await fetch(`${API_URL}/api/auth/logout`, {
+      await apiRequest("/api/auth/logout", {
         method: "POST",
-        credentials: "include",
+        body: JSON.stringify({}),
       });
     } catch (error) {
-      console.error("Erreur de déconnexion :", error);
-    } finally {
-      router.push("/");
-      router.refresh();
-    }
-  };
-
-  const categories = useMemo(() => {
-    const valeurs = appels.map((appel) =>
-      valeurTexte(
-        appel.categorieMarche ||
-          appel.categorie ||
-          appel.typeMarche,
-        ""
-      )
-    );
-
-    return [...new Set(valeurs.filter(Boolean))];
-  }, [appels]);
-
-  const publicationsFiltrees = useMemo(() => {
-    const terme = recherche.toLowerCase().trim();
-
-    return appels.filter((appel) => {
-      const objet = valeurTexte(appel.objet, "").toLowerCase();
-      const reference = valeurTexte(
-        appel.reference,
-        ""
-      ).toLowerCase();
-      const description = valeurTexte(
-        appel.description,
-        ""
-      ).toLowerCase();
-      const categorie = valeurTexte(
-        appel.categorieMarche || appel.categorie || appel.typeMarche,
-        ""
+      console.error(
+        "Erreur de déconnexion :",
+        error
       );
+    } finally {
+      window.location.href = "/";
+    }
+  }
 
-      const correspondRecherche =
-        !terme ||
-        objet.includes(terme) ||
-        reference.includes(terme) ||
-        description.includes(terme) ||
-        categorie.toLowerCase().includes(terme);
+  /* =====================================================
+     RETOUR A LA LISTE
+  ===================================================== */
 
-      const correspondCategorie =
-        filtreCategorie === "TOUS" ||
-        categorie === filtreCategorie;
+  function returnToList() {
+    setSelected(null);
+    setShowDeposit(false);
 
-      return correspondRecherche && correspondCategorie;
-    });
-  }, [appels, recherche, filtreCategorie]);
+    setPieces([]);
+    setCriteres([]);
+    setFilesByPiece({});
+  }
 
-  const nomUtilisateur =
-    utilisateur?.nomComplet ||
-    utilisateur?.nom ||
-    utilisateur?.matricule ||
-    "Soumissionnaire";
-
-  const initiales = nomUtilisateur
-    .split(" ")
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((mot) => mot[0])
-    .join("")
-    .toUpperCase();
+  /* =====================================================
+     AFFICHAGE
+  ===================================================== */
 
   return (
     <main className="soumissionnaire-page">
-      <aside className={`soumissionnaire-sidebar ${menuOuvert ? "sidebar-open" : ""}`}>
-        <div className="soumissionnaire-logo">
-          <div className="logo-image">
-            <img src="/spat.png" alt="Logo SPAT" />
+
+      {/* SIDEBAR */}
+
+      <aside
+        className={`soumissionnaire-sidebar ${
+          mobileMenu ? "is-open" : ""
+        }`}
+      >
+
+        <div className="soumissionnaire-brand">
+
+          <div className="soumissionnaire-brand-mark">
+            <Building2 size={24} />
           </div>
 
-          <div className="logo-description">
-            <h2>SPAT</h2>
+          <div>
+            <strong>SPAT</strong>
             <span>Gestion des marchés</span>
           </div>
 
           <button
-            className="close-sidebar"
-            onClick={() => setMenuOuvert(false)}
+            className="sq-icon mobile-close"
+            onClick={() => setMobileMenu(false)}
             aria-label="Fermer le menu"
           >
-            <X size={20} />
+            <X size={19} />
           </button>
+
         </div>
 
-        <div className="sidebar-separator" />
+        <div className="sidebar-caption">
+          ESPACE SOUMISSIONNAIRE
+        </div>
 
-        <div className="sidebar-section-title">ESPACE PERSONNEL</div>
+        <button
+          className={`side-link ${
+            activeTab === "appels" ? "active" : ""
+          }`}
+          onClick={() => {
+            setActiveTab("appels");
+            returnToList();
+            setMobileMenu(false);
+          }}
+        >
+          <FileText size={18} />
+          Appels d'offres
+        </button>
 
-        <nav className="soumissionnaire-navigation">
-          <button className="sidebar-link active">
-            <Megaphone size={19} />
-            <span>Appels d'offres</span>
-          </button>
-
-          <button className="sidebar-link" onClick={actualiser}>
-            <RefreshCw size={19} />
-            <span>Actualiser les publications</span>
-          </button>
-        </nav>
+        <button
+          className={`side-link ${
+            activeTab === "mes-offres" ? "active" : ""
+          }`}
+          onClick={() => {
+            setActiveTab("mes-offres");
+            setSelected(null);
+            setShowDeposit(false);
+            setMobileMenu(false);
+            loadMesOffres();
+          }}
+        >
+          <FileCheck2 size={18} />
+          Mes dépôts
+        </button>
 
         <div className="sidebar-bottom">
-          <div className="sidebar-help">
-            <div className="help-icon">
-              <FileText size={21} />
+
+          <div className="profile-mini">
+
+            <div className="profile-avatar">
+              {(session?.nomComplet || "S")
+                .charAt(0)
+                .toUpperCase()}
             </div>
-            <strong>Besoin d'aide ?</strong>
-            <p>Consultez les appels d'offres publiés par la SPAT.</p>
-          </div>
-
-          <button className="sidebar-logout" onClick={deconnexion}>
-            <LogOut size={19} />
-            <span>Déconnexion</span>
-          </button>
-        </div>
-      </aside>
-
-      {menuOuvert && (
-        <div
-          className="sidebar-overlay"
-          onClick={() => setMenuOuvert(false)}
-        />
-      )}
-
-      <section className="soumissionnaire-main">
-        <header className="soumissionnaire-header">
-          <div className="header-left">
-            <button
-              className="mobile-menu-button"
-              onClick={() => setMenuOuvert(true)}
-              aria-label="Ouvrir le menu"
-            >
-              <Menu size={22} />
-            </button>
 
             <div>
-              <span className="header-subtitle">ESPACE SOUMISSIONNAIRE</span>
-              <h1>Appels d'offres</h1>
+              <strong>
+                {session?.nomComplet || "Soumissionnaire"}
+              </strong>
+
+              <span>
+                {session?.matricule || "Compte connecté"}
+              </span>
             </div>
+
           </div>
 
-          <div className="header-user">
-            <div className="header-notification">
-              <Bell size={20} />
-              {appels.length > 0 && <span />}
-            </div>
+          <button
+            className="side-link logout-link"
+            onClick={logout}
+          >
+            <LogOut size={18} />
+            Déconnexion
+          </button>
 
-            <div className="header-avatar">{initiales || "S"}</div>
+        </div>
 
-            <div className="header-user-info">
-              <strong>{nomUtilisateur}</strong>
-              <span>Soumissionnaire</span>
-            </div>
+      </aside>
 
-            <button
-              className="header-logout"
-              onClick={deconnexion}
-              title="Déconnexion"
-            >
-              <LogOut size={19} />
-            </button>
+      {/* CONTENU PRINCIPAL */}
+
+      <section className="soumissionnaire-main">
+
+        <header className="soumissionnaire-topbar">
+
+          <button
+            className="sq-icon mobile-menu-button"
+            onClick={() => setMobileMenu(true)}
+            aria-label="Ouvrir le menu"
+          >
+            <Menu size={21} />
+          </button>
+
+          <div>
+            <span className="topbar-eyebrow">
+              PORT DE TOAMASINA
+            </span>
+
+            <h1>Espace soumissionnaire</h1>
           </div>
+
+          <button
+            className="refresh-button"
+            onClick={() => {
+              if (activeTab === "appels") {
+                loadAppels();
+              } else {
+                loadMesOffres();
+              }
+            }}
+            disabled={loading || loadingOffres}
+          >
+            <RefreshCw
+              size={16}
+              className={
+                loading || loadingOffres ? "spin" : ""
+              }
+            />
+
+            Actualiser
+          </button>
+
         </header>
 
-        <div className="soumissionnaire-content">
-          <section className="publication-hero">
-            <div className="hero-content">
-              <span className="hero-label">
-                <span className="hero-dot" />
-                PLATEFORME OFFICIELLE SPAT
-              </span>
+        {/* NOTIFICATIONS */}
 
-              <h2>
-                Découvrez les appels
-                <br />
-                d'offres publiés
-              </h2>
+        {notice.message && (
+          <div className={`notice notice-${notice.type}`}>
 
-              <p>
-                Retrouvez ici les opportunités publiées par le Responsable
-                des marchés de la Société du Port à Gestion Autonome de
-                Toamasina.
-              </p>
+            <span>
+              {notice.type === "success" ? (
+                <CheckCircle2 size={18} />
+              ) : (
+                <AlertCircle size={18} />
+              )}
+            </span>
 
-              <div className="hero-stat">
-                <div className="hero-stat-icon">
-                  <Megaphone size={20} />
+            <p>{notice.message}</p>
+
+            <button
+              onClick={() =>
+                setNotice({
+                  type: "",
+                  message: "",
+                })
+              }
+              aria-label="Fermer"
+            >
+              <X size={16} />
+            </button>
+
+          </div>
+        )}
+
+        {/* ==========================================
+            ONGLET APPELS D'OFFRES
+        ========================================== */}
+
+        {activeTab === "appels" && !selected && (
+          <>
+
+            <section className="welcome-panel">
+
+              <div>
+
+                <span className="welcome-tag">
+                  ESPACE DE SOUMISSION
+                </span>
+
+                <h2>
+                  Les opportunités de marchés
+                </h2>
+
+                <p>
+                  Consulte les appels d'offres publiés
+                  par le Responsable des marchés et
+                  prépare ton dossier de soumission.
+                </p>
+
+              </div>
+
+              <div className="welcome-illustration">
+                <ClipboardList size={66} />
+              </div>
+
+            </section>
+
+            <div className="stats-row">
+
+              <div className="stat-card">
+
+                <div className="stat-icon blue">
+                  <FileText size={20} />
                 </div>
+
                 <div>
+                  <span>Appels ouverts</span>
                   <strong>{appels.length}</strong>
-                  <span>Publication{appels.length > 1 ? "s" : ""} disponible{appels.length > 1 ? "s" : ""}</span>
                 </div>
+
               </div>
+
+              <div className="stat-card">
+
+                <div className="stat-icon green">
+                  <Clock3 size={20} />
+                </div>
+
+                <div>
+                  <span>Résultats affichés</span>
+                  <strong>{filteredAppels.length}</strong>
+                </div>
+
+              </div>
+
             </div>
 
-            <div className="hero-decoration">
-              <div className="hero-circle hero-circle-one" />
-              <div className="hero-circle hero-circle-two" />
-              <div className="hero-document">
-                <FileText size={76} strokeWidth={1.2} />
-                <span><CheckCircle2 size={25} /></span>
+            <section className="listing-section">
+
+              <div className="section-heading">
+
+                <div>
+                  <h2>
+                    Appels d'offres disponibles
+                  </h2>
+
+                  <p>
+                    Seuls les appels publiés dont la
+                    date limite n'est pas dépassée
+                    sont affichés.
+                  </p>
+                </div>
+
               </div>
+
+              <div className="filter-bar">
+
+                <div className="search-field">
+
+                  <Search size={18} />
+
+                  <input
+                    value={search}
+                    onChange={(event) =>
+                      setSearch(event.target.value)
+                    }
+                    placeholder="Rechercher par référence, objet, lieu..."
+                  />
+
+                </div>
+
+                <select
+                  value={typeFilter}
+                  onChange={(event) =>
+                    setTypeFilter(event.target.value)
+                  }
+                >
+                  <option value="TOUS">
+                    Tous les types
+                  </option>
+
+                  <option value="FOURNITURE">
+                    Fourniture
+                  </option>
+
+                  <option value="SERVICE">
+                    Service
+                  </option>
+
+                </select>
+
+              </div>
+
+              {loading ? (
+
+                <div className="loading-state">
+                  <span className="loader" />
+                  Chargement des appels d'offres...
+                </div>
+
+              ) : filteredAppels.length === 0 ? (
+
+                <div className="empty-state">
+
+                  <div>
+                    <FileText size={30} />
+                  </div>
+
+                  <h3>
+                    Aucun appel d'offres disponible
+                  </h3>
+
+                  <p>
+                    Aucun appel publié ne correspond
+                    à ta recherche pour le moment.
+                  </p>
+
+                </div>
+
+              ) : (
+
+                <div className="appel-grid">
+
+                  {filteredAppels.map((appel) => (
+
+                    <article
+                      className="appel-card"
+                      key={getAppelId(appel)}
+                    >
+
+                      <div className="appel-card-top">
+
+                        <span className="status-pill open">
+                          <span />
+                          Publié
+                        </span>
+
+                        <span className="appel-type">
+                          {appel.typeMarche || "Marché"}
+                        </span>
+
+                      </div>
+
+                      <div className="appel-reference">
+                        {appel.reference ||
+                          `AO-${getAppelId(appel)}`}
+                      </div>
+
+                      <h3>
+                        {appel.objet ||
+                          "Appel d'offres sans objet"}
+                      </h3>
+
+                      <p className="appel-description">
+                        {appel.description ||
+                          "Aucune description disponible."}
+                      </p>
+
+                      <div className="appel-meta">
+
+                        <span>
+                          <CalendarDays size={15} />
+                          Limite :{" "}
+                          {formatDate(
+                            appel.dateLimiteDepot ??
+                            appel.date_limite_depot
+                          )}
+                        </span>
+
+                        <span>
+                          <MapPin size={15} />
+                          {appel.lieuExecution ||
+                            "Lieu non précisé"}
+                        </span>
+
+                      </div>
+
+                      <div className="appel-card-footer">
+
+                        <span className="estimated-amount">
+                          {formatMoney(
+                            appel.montantEstime
+                          )}
+                        </span>
+
+                        <button
+                          className="primary-button small"
+                          onClick={() => openDetail(appel)}
+                          disabled={detailLoading}
+                        >
+                          Consulter
+                          <ChevronRight size={16} />
+                        </button>
+
+                      </div>
+
+                    </article>
+
+                  ))}
+
+                </div>
+
+              )}
+
+            </section>
+
+          </>
+        )}
+
+        {/* ==========================================
+            DETAIL APPEL D'OFFRES
+        ========================================== */}
+
+        {activeTab === "appels" && selected && (
+
+          <section className="detail-view">
+
+            <button
+              className="back-link"
+              onClick={returnToList}
+            >
+              <ChevronRight size={17} />
+              Retour aux appels d'offres
+            </button>
+
+            <div className="detail-hero">
+
+              <div>
+
+                <span className="status-pill open">
+                  <span />
+                  Publié
+                </span>
+
+                <div className="detail-reference">
+                  {selected.reference}
+                </div>
+
+                <h2>{selected.objet}</h2>
+
+                <p>
+                  {selected.description ||
+                    "Aucune description renseignée."}
+                </p>
+
+              </div>
+
+              <div className="detail-code">
+                <FileText size={32} />
+                <span>APPEL D'OFFRES</span>
+              </div>
+
             </div>
+
+            <div className="detail-facts">
+
+              <div>
+                <span>Type de marché</span>
+                <strong>
+                  {selected.typeMarche || "—"}
+                </strong>
+              </div>
+
+              <div>
+                <span>Montant estimé</span>
+                <strong>
+                  {formatMoney(selected.montantEstime)}
+                </strong>
+              </div>
+
+              <div>
+                <span>Lieu d'exécution</span>
+                <strong>
+                  {selected.lieuExecution || "—"}
+                </strong>
+              </div>
+
+              <div>
+                <span>Date limite de dépôt</span>
+                <strong>
+                  {formatDate(
+                    selected.dateLimiteDepot ??
+                    selected.date_limite_depot
+                  )}
+                </strong>
+              </div>
+
+            </div>
+
+            <div className="detail-columns">
+
+              {/* PIECES REQUISES */}
+
+              <div className="detail-panel">
+
+                <div className="panel-title">
+                  <FileCheck2 size={19} />
+                  <h3>Pièces requises</h3>
+                </div>
+
+                {pieces.length > 0 ? (
+
+                  <ul className="required-list">
+
+                    {pieces.map((piece) => (
+
+                      <li key={getPieceId(piece)}>
+
+                        <span className="document-icon">
+                          <FileText size={17} />
+                        </span>
+
+                        <span className="document-name">
+
+                          <strong>
+                            {piece.nomPiece}
+                          </strong>
+
+                          <small>
+                            {piece.description ||
+                              "Document justificatif"}
+                          </small>
+
+                        </span>
+
+                        <span
+                          className={
+                            piece.obligatoire
+                              ? "required-tag"
+                              : "optional-tag"
+                          }
+                        >
+                          {piece.obligatoire
+                            ? "Obligatoire"
+                            : "Facultative"}
+                        </span>
+
+                      </li>
+
+                    ))}
+
+                  </ul>
+
+                ) : (
+
+                  <p className="muted-text">
+                    Aucune pièce requise n'a été
+                    renseignée pour cet appel.
+                  </p>
+
+                )}
+
+              </div>
+
+              {/* CRITERES */}
+
+              <div className="detail-panel">
+
+                <div className="panel-title">
+                  <ClipboardList size={19} />
+                  <h3>Critères d'évaluation</h3>
+                </div>
+
+                {criteres.length > 0 ? (
+
+                  <ul className="criteria-list">
+
+                    {criteres.map((row, index) => {
+
+                      const critere =
+                        row.critere ||
+                        row.critereEvaluation ||
+                        row;
+
+                      return (
+
+                        <li
+                          key={
+                            row.idAppelOffreCritere ||
+                            getCritereId(row) ||
+                            index
+                          }
+                        >
+
+                          <span>
+
+                            <strong>
+                              {critere.nomCritere || "Critère"}
+                            </strong>
+
+                            <small>
+                              {critere.description || ""}
+                            </small>
+
+                          </span>
+
+                          <b>
+                            {row.ponderation ??
+                              critere.ponderation ??
+                              0}
+                            %
+                          </b>
+
+                        </li>
+
+                      );
+
+                    })}
+
+                  </ul>
+
+                ) : (
+
+                  <p className="muted-text">
+                    Les critères détaillés ne sont
+                    pas disponibles pour cet appel
+                    d'offres.
+                  </p>
+
+                )}
+
+              </div>
+
+            </div>
+
+            <div className="detail-actions">
+
+              <div>
+                <strong>
+                  Prêt à soumettre ton offre ?
+                </strong>
+
+                <span>
+                  Vérifie les conditions et prépare
+                  les documents requis.
+                </span>
+              </div>
+
+              <button
+                className="primary-button"
+                onClick={openDeposit}
+                disabled={!isAppelOpen(selected)}
+              >
+                <Send size={17} />
+                Déposer une offre
+              </button>
+
+            </div>
+
           </section>
 
-          <section className="publication-toolbar">
-            <div className="toolbar-heading">
+        )}
+
+        {/* ==========================================
+            MES DEPOTS
+        ========================================== */}
+
+        {activeTab === "mes-offres" && (
+
+          <section className="listing-section deposits-section">
+
+            <div className="section-heading">
+
               <div>
-                <span className="section-eyebrow">FIL D'ACTUALITÉ</span>
-                <h2>Dernières publications</h2>
-                <p>Les appels d'offres officiellement publiés par la SPAT.</p>
+                <h2>Suivi de mes dépôts</h2>
+
+                <p>
+                  Consulte les offres que tu as
+                  déposées avec ton compte.
+                </p>
               </div>
 
               <button
                 className="refresh-button"
-                onClick={actualiser}
-                disabled={actualisation || chargement}
+                onClick={loadMesOffres}
+                disabled={loadingOffres}
               >
                 <RefreshCw
-                  size={17}
-                  className={actualisation ? "spinning" : ""}
+                  size={16}
+                  className={
+                    loadingOffres ? "spin" : ""
+                  }
                 />
+
                 Actualiser
               </button>
+
             </div>
 
-            <div className="publication-filters">
-              <div className="publication-search">
-                <Search size={19} />
-                <input
-                  type="text"
-                  placeholder="Rechercher un appel d'offres..."
-                  value={recherche}
-                  onChange={(e) => setRecherche(e.target.value)}
-                />
-                {recherche && (
-                  <button onClick={() => setRecherche("")} aria-label="Effacer">
-                    <X size={17} />
-                  </button>
-                )}
+            {loadingOffres ? (
+
+              <div className="loading-state">
+                <span className="loader" />
+                Chargement de tes dépôts...
               </div>
 
-              <div className="publication-category">
-                <Tag size={17} />
-                <select
-                  value={filtreCategorie}
-                  onChange={(e) => setFiltreCategorie(e.target.value)}
-                >
-                  <option value="TOUS">Toutes les catégories</option>
-                  {categories.map((categorie) => (
-                    <option key={categorie} value={categorie}>
-                      {categorie}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          </section>
+            ) : mesOffres.length === 0 ? (
 
-          {erreur && (
-            <div className="publication-error">
-              <AlertCircle size={21} />
-              <div>
-                <strong>Impossible de charger les publications</strong>
-                <p>{erreur}</p>
-                <button onClick={() => chargerAppels()}>
-                  Réessayer
-                </button>
-              </div>
-            </div>
-          )}
+              <div className="empty-state">
 
-          {chargement ? (
-            <div className="publication-loading">
-              <div className="loading-spinner" />
-              <strong>Chargement des publications...</strong>
-              <span>Veuillez patienter quelques instants.</span>
-            </div>
-          ) : !erreur && publicationsFiltrees.length === 0 ? (
-            <div className="publication-empty">
-              <div className="empty-icon">
-                <Megaphone size={35} />
-              </div>
+                <div>
+                  <FileCheck2 size={30} />
+                </div>
 
-              <h3>
-                {appels.length === 0
-                  ? "Aucun appel d'offres publié"
-                  : "Aucun résultat trouvé"}
-              </h3>
+                <h3>Aucun dépôt effectué</h3>
 
-              <p>
-                {appels.length === 0
-                  ? "Les appels d'offres apparaîtront ici dès que le Responsable des marchés les aura publiés."
-                  : "Essayez de modifier votre recherche ou votre catégorie."}
-              </p>
+                <p>
+                  Les offres que tu enverras
+                  apparaîtront ici.
+                </p>
 
-              {appels.length > 0 && (
                 <button
-                  className="empty-reset"
+                  className="secondary-button"
                   onClick={() => {
-                    setRecherche("");
-                    setFiltreCategorie("TOUS");
+                    setActiveTab("appels");
+                    returnToList();
                   }}
                 >
-                  Réinitialiser les filtres
+                  Voir les appels d'offres
                 </button>
-              )}
-            </div>
-          ) : (
-            <section className="publication-feed">
-              <div className="feed-count">
-                <span>
-                  {publicationsFiltrees.length} publication
-                  {publicationsFiltrees.length > 1 ? "s" : ""}
-                </span>
-                <span className="feed-count-dot" />
-                <span>Appels d'offres publiés</span>
+
               </div>
 
-              {publicationsFiltrees.map((appel, index) => {
-                const categorie = valeurTexte(
-                  appel.categorieMarche ||
-                    appel.categorie ||
-                    appel.typeMarche,
-                  "Appel d'offres"
-                );
+            ) : (
 
-                const responsable = valeurTexte(
-                  appel.responsable?.nomComplet ||
-                    appel.utilisateur?.nomComplet ||
-                    appel.createur?.nomComplet,
-                  "Responsable des marchés"
-                );
+              <div className="appel-grid">
 
-                return (
-                  <article
-                    className="publication-card"
-                    key={appel.idAppelOffre || appel.id || index}
-                  >
-                    <div className="publication-card-header">
-                      <div className="publisher-avatar">
-                        <Building2 size={23} />
+                {mesOffres.map((offre) => {
+
+                  const appel = getAppelFromOffre(offre);
+
+                  return (
+
+                    <article
+                      className="appel-card"
+                      key={getOffreId(offre)}
+                    >
+
+                      <div className="appel-card-top">
+
+                        <span className="status-pill open">
+                          <span />
+                          {offre.statut || "Déposée"}
+                        </span>
+
+                        <span className="appel-type">
+                          Offre envoyée
+                        </span>
+
                       </div>
 
-                      <div className="publisher-information">
-                        <strong>SPAT – {responsable}</strong>
-                        <div className="publisher-date">
-                          <CalendarDays size={13} />
-                          <span>
-                            Publié le{" "}
-                            {formatDate(
-                              appel.datePublication ||
-                                appel.dateCreation
-                            )}
-                          </span>
-                          <span className="date-separator">·</span>
-                          <span className="public-status">
-                            <span />
-                            Publié
-                          </span>
-                        </div>
+                      <div className="appel-reference">
+                        {appel?.reference || "Appel d'offres"}
                       </div>
 
-                      <div className="publication-status">
-                        <CheckCircle2 size={14} />
-                        PUBLIE
-                      </div>
-                    </div>
+                      <h3>
+                        {appel?.objet || "Mon offre"}
+                      </h3>
 
-                    <div className="publication-card-body">
-                      <div className="publication-reference">
-                        <FileText size={14} />
-                        Référence : {valeurTexte(appel.reference, "Non attribuée")}
-                      </div>
+                      <div className="appel-meta">
 
-                      <h3>{valeurTexte(appel.objet, "Appel d'offres")}</h3>
+                        <span>
+                          <CalendarDays size={15} />
+                          Dépôt : {formatDate(getDateDepot(offre))}
+                        </span>
 
-                      <p className="publication-description">
-                        {valeurTexte(
-                          appel.description,
-                          "Consultez les détails de cet appel d'offres pour connaître les conditions de participation."
-                        )}
-                      </p>
+                        <span>
+                          <Receipt size={15} />
+                          Accusé : {getAccuse(offre)}
+                        </span>
 
-                      <div className="publication-category-label">
-                        <Tag size={14} />
-                        {categorie}
                       </div>
 
-                      <div className="publication-information-grid">
-                        <div className="publication-information-item">
-                          <div className="information-icon">
-                            <CalendarDays size={17} />
-                          </div>
-                          <div>
-                            <span>Date de publication</span>
-                            <strong>
-                              {formatDate(appel.datePublication)}
-                            </strong>
-                          </div>
-                        </div>
+                      <div className="appel-card-footer">
 
-                        <div className="publication-information-item">
-                          <div className="information-icon deadline-icon">
-                            <Clock size={17} />
-                          </div>
-                          <div>
-                            <span>Date limite de dépôt</span>
-                            <strong>
-                              {formatDate(appel.dateLimiteDepot)}
-                            </strong>
-                          </div>
-                        </div>
+                        <span className="estimated-amount">
+                          {formatMoney(offre.montant)}
+                        </span>
 
-                        <div className="publication-information-item">
-                          <div className="information-icon">
-                            <MapPin size={17} />
-                          </div>
-                          <div>
-                            <span>Lieu d'exécution</span>
-                            <strong>
-                              {valeurTexte(appel.lieuExecution)}
-                            </strong>
-                          </div>
-                        </div>
+                        <span className="status-pill open">
+                          {offre.statut || "DEPOSEE"}
+                        </span>
 
-                        <div className="publication-information-item">
-                          <div className="information-icon">
-                            <Building2 size={17} />
-                          </div>
-                          <div>
-                            <span>Type de marché</span>
-                            <strong>
-                              {valeurTexte(
-                                appel.typeMarche ||
-                                  appel.type ||
-                                  appel.typeAppelOffre
-                              )}
-                            </strong>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="publication-card-footer">
-                      <div className="publication-footer-note">
-                        <CheckCircle2 size={16} />
-                        <span>Publication officielle SPAT</span>
                       </div>
 
-                      <button
-                        className="publication-detail-button"
-                        onClick={() => setAppelSelectionne(appel)}
-                      >
-                        <Eye size={17} />
-                        Voir les détails
-                        <ChevronRight size={17} />
-                      </button>
-                    </div>
-                  </article>
-                );
-              })}
-            </section>
-          )}
+                    </article>
 
-          <footer className="soumissionnaire-footer">
-            <span>© {new Date().getFullYear()} SPAT – Tous droits réservés.</span>
-            <span>Plateforme de gestion des appels d'offres et des marchés</span>
-          </footer>
-        </div>
+                  );
+
+                })}
+
+              </div>
+
+            )}
+
+          </section>
+
+        )}
+
       </section>
 
-      {appelSelectionne && (
+      {/* ==========================================
+          MODAL DEPOT OFFRE
+      ========================================== */}
+
+      {showDeposit && selected && (
+
         <div
-          className="detail-modal-overlay"
-          onClick={() => setAppelSelectionne(null)}
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (
+              event.target === event.currentTarget &&
+              !submitting
+            ) {
+              setShowDeposit(false);
+            }
+          }}
         >
-          <div
-            className="detail-modal"
-            onClick={(e) => e.stopPropagation()}
+
+          <section
+            className="deposit-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="deposit-title"
           >
-            <div className="detail-modal-header">
+
+            <header>
+
               <div>
-                <span className="section-eyebrow">PUBLICATION OFFICIELLE</span>
-                <h2>Détails de l'appel d'offres</h2>
-              </div>
 
-              <button
-                className="modal-close"
-                onClick={() => setAppelSelectionne(null)}
-                aria-label="Fermer"
-              >
-                <X size={21} />
-              </button>
-            </div>
-
-            <div className="detail-modal-content">
-              <div className="detail-reference">
-                <FileText size={16} />
-                Référence : {valeurTexte(appelSelectionne.reference)}
-                <span className="detail-published-badge">
-                  <CheckCircle2 size={13} />
-                  PUBLIE
+                <span className="modal-eyebrow">
+                  SOUMISSION ÉLECTRONIQUE
                 </span>
+
+                <h2 id="deposit-title">
+                  Déposer une offre
+                </h2>
+
+                <p>
+                  {selected.reference} — {selected.objet}
+                </p>
+
               </div>
 
-              <h3>{valeurTexte(appelSelectionne.objet)}</h3>
-
-              <p className="detail-description">
-                {valeurTexte(
-                  appelSelectionne.description,
-                  "Aucune description disponible."
-                )}
-              </p>
-
-              <div className="detail-info-list">
-                <div>
-                  <CalendarDays size={18} />
-                  <span>Date de publication</span>
-                  <strong>
-                    {formatDate(appelSelectionne.datePublication)}
-                  </strong>
-                </div>
-
-                <div>
-                  <Clock size={18} />
-                  <span>Date limite de dépôt</span>
-                  <strong>
-                    {formatDate(appelSelectionne.dateLimiteDepot)}
-                  </strong>
-                </div>
-
-                <div>
-                  <MapPin size={18} />
-                  <span>Lieu d'exécution</span>
-                  <strong>
-                    {valeurTexte(appelSelectionne.lieuExecution)}
-                  </strong>
-                </div>
-
-                <div>
-                  <Tag size={18} />
-                  <span>Catégorie</span>
-                  <strong>
-                    {valeurTexte(
-                      appelSelectionne.categorieMarche ||
-                        appelSelectionne.categorie ||
-                        appelSelectionne.typeMarche
-                    )}
-                  </strong>
-                </div>
-
-                <div>
-                  <Building2 size={18} />
-                  <span>Type de marché</span>
-                  <strong>
-                    {valeurTexte(
-                      appelSelectionne.typeMarche ||
-                        appelSelectionne.type ||
-                        appelSelectionne.typeAppelOffre
-                    )}
-                  </strong>
-                </div>
-
-                {appelSelectionne.montantEstime !== null &&
-                  appelSelectionne.montantEstime !== undefined && (
-                    <div>
-                      <FileText size={18} />
-                      <span>Montant estimé</span>
-                      <strong>
-                        {Number(
-                          appelSelectionne.montantEstime
-                        ).toLocaleString("fr-FR")}{" "}
-                        Ar
-                      </strong>
-                    </div>
-                  )}
-              </div>
-            </div>
-
-            <div className="detail-modal-footer">
               <button
-                className="detail-close-button"
-                onClick={() => setAppelSelectionne(null)}
+                type="button"
+                className="sq-icon"
+                onClick={() => {
+                  if (!submitting) {
+                    setShowDeposit(false);
+                  }
+                }}
+                aria-label="Fermer"
+                disabled={submitting}
               >
-                Fermer
+                <X size={20} />
               </button>
-            </div>
-          </div>
+
+            </header>
+
+            <form onSubmit={submitOffer}>
+
+              {/* MONTANT FINANCIER */}
+
+              <label className="form-label">
+
+                Montant proposé (Ar) <em>*</em>
+
+                <input
+                  type="number"
+                  min="1"
+                  step="0.01"
+                  value={montant}
+                  onChange={(event) =>
+                    setMontant(event.target.value)
+                  }
+                  placeholder="Ex. 25000000"
+                  required
+                  disabled={submitting}
+                />
+
+              </label>
+
+              {/* DOCUMENTS JUSTIFICATIFS */}
+
+              <div className="upload-section">
+
+                <div className="upload-heading">
+                  <Upload size={18} />
+
+                  <strong>
+                    Documents justificatifs
+                  </strong>
+
+                </div>
+
+                <p>
+                  Formats acceptés : PDF, DOC, DOCX,
+                  XLS, XLSX, JPG et PNG.
+                  Taille maximale : 10 Mo par fichier.
+                </p>
+
+                {pieces.length > 0 ? (
+
+                  pieces.map((piece) => {
+
+                    const pieceId = getPieceId(piece);
+
+                    const selectedFile =
+                      filesByPiece[pieceId];
+
+                    return (
+
+                      <label
+                        className="file-upload-row"
+                        key={pieceId}
+                      >
+
+                        <span>
+
+                          <strong>
+                            {piece.nomPiece}
+                          </strong>
+
+                          <small>
+                            {piece.obligatoire
+                              ? "Obligatoire"
+                              : "Facultative"}
+                          </small>
+
+                        </span>
+
+                        <span className="file-control">
+
+                          {selectedFile ? (
+
+                            <>
+                              <CheckCircle2 size={16} />
+                              {selectedFile.name}
+                            </>
+
+                          ) : (
+
+                            <>
+                              <Upload size={16} />
+                              Choisir
+                            </>
+
+                          )}
+
+                          <input
+                            type="file"
+                            accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
+                            disabled={submitting}
+                            onChange={(event) => {
+
+                              const file =
+                                event.target.files?.[0] ||
+                                null;
+
+                              if (file) {
+                                const extension =
+                                  getFileExtension(file.name);
+
+                                if (
+                                  !ALLOWED_EXTENSIONS.includes(extension)
+                                ) {
+                                  setNotice({
+                                    type: "error",
+                                    message:
+                                      "Format de fichier non accepté.",
+                                  });
+
+                                  event.target.value = "";
+                                  return;
+                                }
+
+                                if (file.size > MAX_FILE_SIZE) {
+                                  setNotice({
+                                    type: "error",
+                                    message:
+                                      "Le fichier dépasse la limite de 10 Mo.",
+                                  });
+
+                                  event.target.value = "";
+                                  return;
+                                }
+                              }
+
+                              setFilesByPiece((previous) => ({
+                                ...previous,
+                                [pieceId]: file,
+                              }));
+
+                            }}
+                          />
+
+                        </span>
+
+                      </label>
+
+                    );
+
+                  })
+
+                ) : (
+
+                  <div className="no-files">
+                    Aucune pièce requise n'a été définie.
+                  </div>
+
+                )}
+
+              </div>
+
+              {/* AVERTISSEMENT */}
+
+              <div className="deposit-warning">
+
+                <AlertCircle size={17} />
+
+                <span>
+                  Vérifie le montant et les documents
+                  avant d'envoyer ton offre. Après
+                  validation, un accusé de réception
+                  horodaté sera généré par le serveur.
+                </span>
+
+              </div>
+
+              {/* BOUTONS */}
+
+              <footer>
+
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => setShowDeposit(false)}
+                  disabled={submitting}
+                >
+                  Annuler
+                </button>
+
+                <button
+                  type="submit"
+                  className="primary-button"
+                  disabled={submitting}
+                >
+
+                  {submitting ? (
+
+                    "Envoi en cours..."
+
+                  ) : (
+
+                    <>
+                      <Send size={16} />
+                      Envoyer l'offre
+                    </>
+
+                  )}
+
+                </button>
+
+              </footer>
+
+            </form>
+
+          </section>
+
         </div>
+
       )}
+
     </main>
   );
 }

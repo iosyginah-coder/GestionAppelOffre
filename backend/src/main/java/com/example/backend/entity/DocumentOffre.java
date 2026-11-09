@@ -1,9 +1,7 @@
+
 package com.example.backend.entity;
 
 import jakarta.persistence.*;
-import java.math.BigDecimal;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "document_offre")
@@ -24,22 +22,59 @@ public class DocumentOffre {
     private String chemin;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "id_offre", nullable = true)
+    @JoinColumn(name = "id_offre")
     private Offre offre;
 
-    public Long getIdDocument() { return idDocument; }
-    public void setIdDocument(Long value) { this.idDocument = value; }
+    // Pièce requise à laquelle correspond le fichier envoyé
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "id_piece")
+    private PieceRequise pieceRequise;
 
-    public String getTypeDocument() { return typeDocument; }
-    public void setTypeDocument(String value) { this.typeDocument = value; }
+    public Long getIdDocument() {
+        return idDocument;
+    }
 
-    public String getNomFichier() { return nomFichier; }
-    public void setNomFichier(String value) { this.nomFichier = value; }
+    public void setIdDocument(Long idDocument) {
+        this.idDocument = idDocument;
+    }
 
-    public String getChemin() { return chemin; }
-    public void setChemin(String value) { this.chemin = value; }
+    public String getTypeDocument() {
+        return typeDocument;
+    }
 
-    public Offre getOffre() { return offre; }
-    public void setOffre(Offre value) { this.offre = value; }
+    public void setTypeDocument(String typeDocument) {
+        this.typeDocument = typeDocument;
+    }
 
+    public String getNomFichier() {
+        return nomFichier;
+    }
+
+    public void setNomFichier(String nomFichier) {
+        this.nomFichier = nomFichier;
+    }
+
+    public String getChemin() {
+        return chemin;
+    }
+
+    public void setChemin(String chemin) {
+        this.chemin = chemin;
+    }
+
+    public Offre getOffre() {
+        return offre;
+    }
+
+    public void setOffre(Offre offre) {
+        this.offre = offre;
+    }
+
+    public PieceRequise getPieceRequise() {
+        return pieceRequise;
+    }
+
+    public void setPieceRequise(PieceRequise pieceRequise) {
+        this.pieceRequise = pieceRequise;
+    }
 }

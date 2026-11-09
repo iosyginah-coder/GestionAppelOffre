@@ -1,9 +1,8 @@
+
 package com.example.backend.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
-import java.math.BigDecimal;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "piece_requise")
@@ -20,13 +19,54 @@ public class PieceRequise {
     @Column(name = "description", columnDefinition = "text")
     private String description;
 
-    public Long getIdPiece() { return idPiece; }
-    public void setIdPiece(Long value) { this.idPiece = value; }
+    @Column(name = "obligatoire", nullable = false)
+    private Boolean obligatoire = true;
 
-    public String getNomPiece() { return nomPiece; }
-    public void setNomPiece(String value) { this.nomPiece = value; }
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "id_appel_offre", nullable = false)
+    @JsonIgnore
+    private AppelOffre appelOffre;
 
-    public String getDescription() { return description; }
-    public void setDescription(String value) { this.description = value; }
+    public PieceRequise() {
+    }
 
+    public Long getIdPiece() {
+        return idPiece;
+    }
+
+    public void setIdPiece(Long idPiece) {
+        this.idPiece = idPiece;
+    }
+
+    public String getNomPiece() {
+        return nomPiece;
+    }
+
+    public void setNomPiece(String nomPiece) {
+        this.nomPiece = nomPiece;
+    }
+
+    public String getDescription() {
+        return description;
+    }
+
+    public void setDescription(String description) {
+        this.description = description;
+    }
+
+    public Boolean getObligatoire() {
+        return obligatoire;
+    }
+
+    public void setObligatoire(Boolean obligatoire) {
+        this.obligatoire = obligatoire;
+    }
+
+    public AppelOffre getAppelOffre() {
+        return appelOffre;
+    }
+
+    public void setAppelOffre(AppelOffre appelOffre) {
+        this.appelOffre = appelOffre;
+    }
 }

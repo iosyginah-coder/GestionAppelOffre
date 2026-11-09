@@ -26,6 +26,7 @@ const EMPTY_FORM = {
   reference: "", objet: "", description: "", typeMarche: "FOURNITURE", montantEstime: "",
   lieuExecution: "", dateLimiteDepot: "", idCategorie: "",
 };
+const PIECE_VIDE = { nomPiece: "", description: "", obligatoire: true };
 
 const STATUS_COLORS = {
   PUBLIE: "#1768e5",
@@ -33,6 +34,13 @@ const STATUS_COLORS = {
   CLOTURE: "#8b5cf6",
   ATTRIBUE: "#10b981",
   ANNULE: "#ef4444",
+};
+
+const ACTIONS = {
+  publier: { label: "Publier", message: "Appel d'offres publié avec succès.", text: "Il deviendra visible par les soumissionnaires et ouvert aux dépôts d'offres." },
+  cloturer: { label: "Clôturer", message: "Appel d'offres clôturé avec succès.", text: "Les dépôts d'offres ne seront plus acceptés." },
+  annuler: { label: "Annuler", message: "Appel d'offres annulé avec succès.", text: "Cette action met fin à la procédure.", danger: true },
+  attribuer: { label: "Attribuer", message: "Appel d'offres attribué avec succès.", text: "Le marché sera marqué comme attribué." },
 };
 
 /* ---------- utilitaires ---------- */
@@ -81,6 +89,41 @@ const getDateInputValue = (value) => (value ? String(value).slice(0, 16) : "");
 const estEnRetard = (a) =>
   a.statut === "PUBLIE" && a.dateLimiteDepot && new Date(a.dateLimiteDepot) < new Date();
 
+const sommePonderations = (liens) =>
+  liens.reduce((sum, l) => sum + (Number(l.ponderation) || 0), 0);
+
+/* Vérifications avant publication (pièces + critères en plus des champs de base) */
+function analyserBrouillon(appel, comp) {
+  const c = comp || {};
+  const dateOk = Boolean(appel.dateLimiteDepot) && new Date(appel.dateLimiteDepot) > new Date();
+  const categorieOk = Boolean(appel.categorieMarche);
+  const montantOk = appel.typeMarche !== "FOURNITURE" || Number(appel.montantEstime) > 0;
+
+  const piecesConnues = typeof c.pieces === "number";
+  const piecesOk = piecesConnues && c.pieces > 0;
+  const criteresConnus = typeof c.criteres === "number" && typeof c.total === "number";
+  const criteresOk = criteresConnus && c.criteres > 0 && Math.abs(c.total - 100) < 0.01;
+
+  const verifs = [
+    [categorieOk, "Catégorie renseignée"],
+    [montantOk, appel.typeMarche === "FOURNITURE" ? "Montant estimé renseigné" : "Montant non requis (service)"],
+    [dateOk, dateOk ? "Date limite dans le futur" : "Date limite dépassée : modifiez le dossier"],
+    [
+      piecesOk,
+      !piecesConnues ? "Pièces requises : vérification impossible"
+        : piecesOk ? `${c.pieces} pièce(s) requise(s)` : "Aucune pièce requise : modifiez le dossier",
+    ],
+    [
+      criteresOk,
+      !criteresConnus ? "Critères d'évaluation : vérification impossible"
+        : c.criteres === 0 ? "Aucun critère d'évaluation : modifiez le dossier"
+          : criteresOk ? `${c.criteres} critère(s) — total 100 %`
+            : `Total des critères : ${c.total.toFixed(2)} % (100 % attendu)`,
+    ],
+  ];
+  return { verifs, pret: verifs.every(([ok]) => ok) };
+}
+
 /* ---------- graphiques (SVG / CSS, sans librairie) ---------- */
 
 function DonutChart({ segments, total }) {
@@ -121,7 +164,7 @@ function ColumnChart({ data }) {
   return (
     <div className="rx-columns">
       {data.map((d) => (
-        <div className="rx-column" key={d.label}>
+        <div className="rx-column" key={d.key || d.label}>
           <span className="rx-column-value">{d.value}</span>
           <div className="rx-column-track">
             <div
@@ -156,7 +199,7 @@ function BarList({ data, emptyText }) {
   );
 }
 
-/* ---------- styles additionnels (graphiques, publication, confirmation) ---------- */
+/* ---------- styles additionnels (tout est inclus ici) ---------- */
 
 const EXTRA_CSS = `
 .resp-app{--rx-track:#e8edf5;--rx-card:#fff;--rx-line:#e3e9f3;--rx-text:#14213d;--rx-soft:#64748b;--rx-soft-bg:#f5f8fd}
@@ -202,7 +245,7 @@ const EXTRA_CSS = `
 .rx-pub-meta strong{color:var(--rx-text);font-weight:600}
 .rx-checklist{list-style:none;margin:0;padding:12px 14px;background:var(--rx-soft-bg);border-radius:10px;display:grid;gap:7px;font-size:13px;color:var(--rx-text)}
 .rx-checklist li{display:flex;align-items:center;gap:8px}
-.rx-checklist .ok{color:#10b981}.rx-checklist .ko{color:#ef4444}
+.rx-checklist .ok{color:#10b981;flex:none}.rx-checklist .ko{color:#ef4444;flex:none}
 .rx-pub-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:auto}
 .rx-pub-actions button{flex:1;justify-content:center;min-width:110px}
 .rx-btn-publish{background:#10b981;color:#fff;border:0;border-radius:10px;padding:11px 16px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:8px}
@@ -210,13 +253,49 @@ const EXTRA_CSS = `
 .rx-btn-publish:disabled{opacity:.45;cursor:not-allowed}
 .rx-btn-ghost{background:transparent;color:var(--rx-text);border:1px solid var(--rx-line);border-radius:10px;padding:11px 14px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:7px}
 .rx-btn-ghost:hover{background:var(--rx-soft-bg)}
+.rx-btn-ghost:disabled{opacity:.5;cursor:not-allowed}
 .rx-btn-danger{color:#ef4444;border-color:#fecaca}
 .rx-empty{grid-column:1/-1;text-align:center;padding:36px 20px;border:1px dashed var(--rx-line);border-radius:16px;color:var(--rx-soft)}
 .rx-confirm-overlay{position:fixed;inset:0;background:rgba(10,18,36,.55);display:flex;align-items:center;justify-content:center;z-index:200;padding:16px}
 .rx-confirm{background:var(--rx-card);color:var(--rx-text);border-radius:18px;padding:26px;max-width:440px;width:100%;box-shadow:0 24px 60px rgba(0,0,0,.3)}
 .rx-confirm h3{margin:0 0 8px}.rx-confirm p{margin:0 0 20px;color:var(--rx-soft);line-height:1.5}
 .rx-confirm-actions{display:flex;justify-content:flex-end;gap:10px}
-.rx-modal-error{display:flex;align-items:center;gap:8px;background:#fee2e2;color:#b91c1c;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:14px}
+.rx-modal-error{display:flex;align-items:flex-start;gap:8px;background:#fee2e2;color:#b91c1c;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:14px}
+.rx-modal-error svg{flex:none;margin-top:2px}
+.rx-field-hint{font-size:12px;color:var(--rx-soft);margin:0}
+
+.rx-builder-section{margin-top:22px;padding:18px;border:1px solid var(--rx-line);border-radius:14px;background:var(--rx-card)}
+.rx-builder-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+.rx-builder-heading h3{margin:0 0 4px;display:flex;align-items:center;gap:8px;font-size:16px;color:var(--rx-text)}
+.rx-builder-heading p{margin:0;font-size:13px;color:var(--rx-soft)}
+.rx-btn-add{display:inline-flex;align-items:center;gap:6px;background:var(--rx-soft-bg);color:#1768e5;border:1px solid var(--rx-line);border-radius:10px;padding:9px 14px;font-weight:700;font-size:13px;cursor:pointer}
+.rx-btn-add:hover:not(:disabled){background:#e6efff}
+.rx-btn-add:disabled{opacity:.5;cursor:not-allowed}
+.rx-builder-list{display:grid;gap:12px}
+.rx-builder-empty{font-size:13.5px;color:#b45309;background:#fef3c7;border-radius:10px;padding:10px 14px;margin:0 0 12px}
+.rx-builder-item{display:flex;gap:12px;align-items:flex-start;padding:14px;border:1px solid var(--rx-line);border-radius:12px;background:var(--rx-soft-bg)}
+.rx-builder-number{flex:none;width:28px;height:28px;border-radius:50%;background:#1768e5;color:#fff;font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center;margin-top:4px}
+.rx-builder-fields{flex:1;display:grid;gap:10px;min-width:0}
+.rx-builder-fields label,.rx-criterion-item label{display:grid;gap:5px;font-size:12.5px;font-weight:600;color:var(--rx-soft)}
+.rx-builder-fields input:not([type=checkbox]),.rx-criterion-item input,.rx-criterion-item select{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(--rx-line);border-radius:9px;background:var(--rx-card);color:var(--rx-text);font:inherit;font-weight:400;font-size:14px}
+.rx-required-check{display:flex!important;align-items:center;gap:8px;font-weight:500!important;color:var(--rx-text)!important}
+.rx-remove-item{flex:none;background:transparent;border:1px solid #fecaca;color:#ef4444;border-radius:9px;width:36px;height:36px;display:flex;align-items:center;justify-content:center;cursor:pointer;align-self:center}
+.rx-remove-item:hover{background:#fee2e2}
+.rx-criterion-item{display:grid;grid-template-columns:1fr 150px auto;gap:12px;align-items:end;padding:14px;border:1px solid var(--rx-line);border-radius:12px;background:var(--rx-soft-bg)}
+.rx-criterion-item .rx-remove-item{align-self:end}
+.rx-criterion-desc{grid-column:1/-1;font-size:12.5px;color:var(--rx-soft);margin:-4px 0 0}
+.rx-weight-total{margin-top:14px;padding:10px 14px;border-radius:10px;font-size:14px;display:flex;justify-content:space-between;align-items:center;gap:10px}
+.rx-weight-total.ok{background:#d1fae5;color:#065f46}
+.rx-weight-total.ko{background:#fef3c7;color:#92400e}
+@media(max-width:640px){.rx-criterion-item{grid-template-columns:1fr}.rx-criterion-item .rx-remove-item{width:100%}}
+
+.rx-detail-block{margin-top:18px}
+.rx-detail-block h4{margin:0 0 10px;font-size:15px;display:flex;align-items:center;gap:8px;color:var(--rx-text)}
+.rx-detail-list{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.rx-detail-list li{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;padding:10px 14px;background:var(--rx-soft-bg);border-radius:10px;font-size:13.5px;color:var(--rx-text)}
+.rx-detail-list small{display:block;color:var(--rx-soft);margin-top:2px}
+.rx-tag{flex:none;font-size:11.5px;font-weight:700;border-radius:99px;padding:2px 10px;background:#dbeafe;color:#1d4ed8}
+.rx-tag.opt{background:#e5e7eb;color:#4b5563}
 `;
 
 /* ---------- page ---------- */
@@ -227,7 +306,12 @@ export default function ResponsablePage() {
   const [user, setUser] = useState(null);
   const [appels, setAppels] = useState([]);
   const [categories, setCategories] = useState([]);
-  const [statistiques, setStatistiques] = useState(null);
+  const [criteresDisponibles, setCriteresDisponibles] = useState([]); // grilles créées par l'administrateur
+  const [completude, setCompletude] = useState({});
+
+  const [piecesForm, setPiecesForm] = useState([{ ...PIECE_VIDE }]);
+  const [criteresForm, setCriteresForm] = useState([]);
+  const [editReady, setEditReady] = useState(true);
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -240,6 +324,10 @@ export default function ResponsablePage() {
   const [theme, setTheme] = useState("light");
   const themeReady = useRef(false);
 
+  // Date courante lue après le montage (évite l'erreur new Date() pendant le rendu)
+  const [maintenant, setMaintenant] = useState(null);
+  useEffect(() => { setMaintenant(new Date()); }, []);
+
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
   const [filterType, setFilterType] = useState("");
@@ -247,6 +335,7 @@ export default function ResponsablePage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
   const [selectedAppel, setSelectedAppel] = useState(null);
+  const [detailData, setDetailData] = useState({ loading: false, pieces: [], criteres: [], error: "" });
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
@@ -288,6 +377,19 @@ export default function ResponsablePage() {
     return data;
   }, [router]);
 
+  const chargerPieces = useCallback(async (idAppel) => {
+    const data = await apiFetch(`/api/pieces-requises/appel-offre/${idAppel}`);
+    return Array.isArray(data) ? data : [];
+  }, [apiFetch]);
+
+  const chargerTousLesLiens = useCallback(async () => {
+    const data = await apiFetch("/api/appel-offre-criteres");
+    return Array.isArray(data) ? data : [];
+  }, [apiFetch]);
+
+  const filtrerLiens = (liens, idAppel) =>
+    liens.filter((l) => Number(l.appelOffre?.idAppelOffre) === Number(idAppel));
+
   const chargerDonnees = useCallback(async (initial = false) => {
     if (initial) setLoading(true);
     else setRefreshing(true);
@@ -301,19 +403,39 @@ export default function ResponsablePage() {
       }
       setUser(session);
 
-      const [appelsData, categoriesData, statsData] = await Promise.all([
+      const [appelsData, categoriesData, criteresData] = await Promise.all([
         apiFetch("/api/appel-offres"),
         apiFetch("/api/categories-marches"),
-        apiFetch("/api/appel-offres/statistiques").catch(() => null),
+        apiFetch("/api/criteres-evaluation").catch(() => []),
       ]);
 
-      setAppels(Array.isArray(appelsData) ? appelsData : []);
+      const liste = Array.isArray(appelsData) ? appelsData : [];
+      setAppels(liste);
       setCategories(
         (Array.isArray(categoriesData) ? categoriesData : []).filter(
           (c) => String(c.statut || "").toUpperCase() === "ACTIF"
         )
       );
-      setStatistiques(statsData || null);
+      setCriteresDisponibles(Array.isArray(criteresData) ? criteresData : []);
+
+      const brouillons = liste.filter((a) => a.statut === "BROUILLON");
+      const comp = {};
+      if (brouillons.length) {
+        let tousLiens = null;
+        try { tousLiens = await chargerTousLesLiens(); } catch { tousLiens = null; }
+
+        await Promise.all(brouillons.map(async (a) => {
+          let nbPieces = null;
+          try { nbPieces = (await chargerPieces(a.idAppelOffre)).length; } catch { nbPieces = null; }
+          const liens = tousLiens ? filtrerLiens(tousLiens, a.idAppelOffre) : null;
+          comp[a.idAppelOffre] = {
+            pieces: nbPieces,
+            criteres: liens ? liens.length : null,
+            total: liens ? sommePonderations(liens) : null,
+          };
+        }));
+      }
+      setCompletude(comp);
     } catch (err) {
       console.error(err);
       setError(err.message || "Impossible de charger les données.");
@@ -321,11 +443,11 @@ export default function ResponsablePage() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [apiFetch, router]);
+  }, [apiFetch, router, chargerPieces, chargerTousLesLiens]);
 
   useEffect(() => { chargerDonnees(true); }, [chargerDonnees]);
 
-  /* ----- thème (correction : on ne réécrit le stockage qu'après lecture) ----- */
+  /* ----- thème ----- */
 
   useEffect(() => {
     try {
@@ -341,7 +463,6 @@ export default function ResponsablePage() {
     try { localStorage.setItem("spat-responsable-theme", theme); } catch {}
   }, [theme]);
 
-  /* message de succès qui disparaît seul */
   useEffect(() => {
     if (!successMessage) return;
     const t = setTimeout(() => setSuccessMessage(""), 4500);
@@ -357,7 +478,6 @@ export default function ResponsablePage() {
     [appels]
   );
 
-  // Les stats sont recalculées depuis la liste : toujours cohérentes avec l'écran.
   const stats = useMemo(() => {
     const count = (s) => appels.filter((a) => String(a.statut || "").toUpperCase() === s).length;
     return {
@@ -379,41 +499,28 @@ export default function ResponsablePage() {
     { key: "ANNULE", label: "Annulés", value: stats.annules, color: STATUS_COLORS.ANNULE },
   ], [stats]);
 
-const parMois = useMemo(() => {
-  const mois = [];
-
-  // Générer les six derniers mois sans utiliser new Date() directement
-  for (let i = 5; i >= 0; i--) {
-    const date = new Date(2026, 10 - i, 1);
-
-    mois.push({
-      key: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`,
-      label: date.toLocaleDateString("fr-FR", {
-        month: "short",
-      }),
-      value: 0,
-    });
-  }
-
-  // Compter les appels d'offres par mois
-  appels.forEach((a) => {
-    if (!a.dateLimiteDepot) return;
-
-    const date = new Date(a.dateLimiteDepot);
-
-    if (Number.isNaN(date.getTime())) return;
-
-    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-
-    const moisTrouve = mois.find((m) => m.key === key);
-
-    if (moisTrouve) {
-      moisTrouve.value += 1;
+  const parMois = useMemo(() => {
+    if (!maintenant) return [];
+    const mois = [];
+    for (let i = 5; i >= 0; i--) {
+      const date = new Date(maintenant.getFullYear(), maintenant.getMonth() - i, 1);
+      mois.push({
+        key: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`,
+        label: date.toLocaleDateString("fr-FR", { month: "short" }),
+        value: 0,
+      });
     }
-  });
+    appels.forEach((a) => {
+      if (!a.dateLimiteDepot) return;
+      const date = new Date(a.dateLimiteDepot);
+      if (Number.isNaN(date.getTime())) return;
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+      const trouve = mois.find((m) => m.key === key);
+      if (trouve) trouve.value += 1;
+    });
+    return mois;
+  }, [appels, maintenant]);
 
-  return mois;
-}, [appels]);
   const parCategorie = useMemo(() => {
     const map = {};
     appels.forEach((a) => {
@@ -448,6 +555,11 @@ const parMois = useMemo(() => {
   const aPublier = useMemo(() => appels.filter((a) => a.statut === "BROUILLON"), [appels]);
   const dejaPublies = useMemo(() => appels.filter((a) => a.statut === "PUBLIE"), [appels]);
 
+  const nomCritereDuLien = (lien) =>
+    lien.critere?.nomCritere ||
+    criteresDisponibles.find((c) => Number(c.idCritere) === Number(lien.critere?.idCritere))?.nomCritere ||
+    "Critère";
+
   /* ----- formulaire ----- */
 
   const modifierChamp = (e) => {
@@ -458,11 +570,14 @@ const parMois = useMemo(() => {
   const ouvrirCreation = () => {
     setEditingId(null);
     setForm(EMPTY_FORM);
+    setPiecesForm([{ ...PIECE_VIDE }]);
+    setCriteresForm([]);
+    setEditReady(true);
     setModalError("");
     setModalOpen(true);
   };
 
-  const ouvrirModification = (appel) => {
+  const ouvrirModification = async (appel) => {
     setEditingId(appel.idAppelOffre);
     setForm({
       reference: appel.reference || "",
@@ -474,22 +589,81 @@ const parMois = useMemo(() => {
       dateLimiteDepot: getDateInputValue(appel.dateLimiteDepot),
       idCategorie: String(getCategoryId(appel.categorieMarche) || ""),
     });
+    setPiecesForm([{ ...PIECE_VIDE }]);
+    setCriteresForm([]);
     setModalError("");
+    setEditReady(false);
     setModalOpen(true);
+
+    try {
+      const [pieces, tousLiens] = await Promise.all([
+        chargerPieces(appel.idAppelOffre),
+        chargerTousLesLiens(),
+      ]);
+      setPiecesForm(
+        pieces.length
+          ? pieces.map((p) => ({
+              idPiece: p.idPiece, nomPiece: p.nomPiece || "",
+              description: p.description || "", obligatoire: p.obligatoire !== false,
+            }))
+          : [{ ...PIECE_VIDE }]
+      );
+      setCriteresForm(
+        filtrerLiens(tousLiens, appel.idAppelOffre).map((l) => ({
+          idCritere: String(l.critere?.idCritere || ""),
+          ponderation: l.ponderation ?? "",
+        }))
+      );
+      setEditReady(true);
+    } catch (err) {
+      setModalError(
+        "Impossible de charger les pièces et critères existants (" + err.message +
+        "). Fermez la fenêtre puis réessayez : l'enregistrement est bloqué pour éviter de perdre des données."
+      );
+    }
   };
+
+  const ajouterPieceForm = () => setPiecesForm((p) => [...p, { ...PIECE_VIDE }]);
+  const modifierPieceForm = (index, champ, valeur) =>
+    setPiecesForm((p) => p.map((piece, i) => (i === index ? { ...piece, [champ]: valeur } : piece)));
+  const supprimerPieceForm = (index) =>
+    setPiecesForm((p) => (p.length === 1 ? [{ ...PIECE_VIDE }] : p.filter((_, i) => i !== index)));
+
+  const ajouterCritereForm = () => setCriteresForm((p) => [...p, { idCritere: "", ponderation: "" }]);
+  const supprimerCritereForm = (index) => setCriteresForm((p) => p.filter((_, i) => i !== index));
+  const modifierPonderationForm = (index, valeur) =>
+    setCriteresForm((p) => p.map((c, i) => (i === index ? { ...c, ponderation: valeur } : c)));
+  const choisirCritereForm = (index, idCritere) => {
+    const ref = criteresDisponibles.find((c) => String(c.idCritere) === String(idCritere));
+    setCriteresForm((p) => p.map((c, i) => (
+      i === index
+        ? { ...c, idCritere, ponderation: c.ponderation === "" && ref?.ponderation != null ? ref.ponderation : c.ponderation }
+        : c
+    )));
+  };
+
+  const totalPonderations = useMemo(
+    () => criteresForm.reduce((sum, c) => sum + (Number(c.ponderation) || 0), 0),
+    [criteresForm]
+  );
 
   const fermerModal = () => {
     if (saving) return;
     setModalOpen(false);
     setEditingId(null);
     setForm(EMPTY_FORM);
+    setPiecesForm([{ ...PIECE_VIDE }]);
+    setCriteresForm([]);
+    setEditReady(true);
     setModalError("");
   };
 
   const enregistrerAppel = async (event) => {
     event.preventDefault();
+    if (!editReady) return;
 
     if (!form.reference.trim()) return setModalError("Veuillez saisir la référence de l'appel d'offres.");
+    if (form.reference.trim().length > 50) return setModalError("La référence ne doit pas dépasser 50 caractères.");
     if (!form.objet.trim()) return setModalError("Veuillez renseigner l'objet de l'appel d'offres.");
     if (!form.idCategorie) return setModalError("Veuillez sélectionner une catégorie.");
     if (!form.dateLimiteDepot) return setModalError("Veuillez renseigner la date limite de dépôt.");
@@ -500,11 +674,29 @@ const parMois = useMemo(() => {
       return setModalError("Le montant estimé est obligatoire pour une fourniture.");
     }
 
+    const piecesValides = piecesForm.filter((p) => p.nomPiece.trim());
+    if (piecesForm.length > 1 && piecesForm.some((p) => !p.nomPiece.trim())) {
+      return setModalError("Veuillez compléter ou supprimer chaque pièce requise vide.");
+    }
+
+    if (criteresForm.some((c) => !c.idCritere)) {
+      return setModalError("Veuillez sélectionner un critère pour chaque ligne ou supprimer la ligne vide.");
+    }
+    if (criteresForm.some((c) => !c.ponderation || Number(c.ponderation) <= 0 || Number(c.ponderation) > 100)) {
+      return setModalError("Chaque critère doit avoir une pondération comprise entre 0 et 100.");
+    }
+    if (new Set(criteresForm.map((c) => c.idCritere)).size !== criteresForm.length) {
+      return setModalError("Un même critère ne peut pas être ajouté deux fois.");
+    }
+    if (criteresForm.length && Math.abs(totalPonderations - 100) > 0.01) {
+      return setModalError("La somme des pondérations des critères doit être égale à 100 %.");
+    }
+
     setSaving(true);
     setModalError("");
 
     const payload = {
-      reference: form.reference.trim(),
+      reference: form.reference.trim(), // saisie par le responsable, unique
       objet: form.objet.trim(),
       description: form.description.trim(),
       typeMarche: form.typeMarche,
@@ -514,20 +706,76 @@ const parMois = useMemo(() => {
       categorieMarche: { idCategorie: Number(form.idCategorie) },
     };
 
+    let idAppel = editingId;
+    let creation = false;
+
     try {
       if (editingId) {
         await apiFetch(`/api/appel-offres/${editingId}`, { method: "PUT", body: JSON.stringify(payload) });
-        setSuccessMessage("Appel d'offres modifié avec succès.");
       } else {
-        await apiFetch("/api/appel-offres", { method: "POST", body: JSON.stringify(payload) });
-        setSuccessMessage("Appel d'offres créé avec succès (statut Brouillon).");
+        const cree = await apiFetch("/api/appel-offres", { method: "POST", body: JSON.stringify(payload) });
+        idAppel = cree?.idAppelOffre;
+        creation = true;
       }
+      if (!idAppel) throw new Error("Le serveur n'a pas retourné l'identifiant de l'appel d'offres.");
+
+      if (editingId || creation) {
+        const [anciennesPieces, tousLiens] = await Promise.all([
+          chargerPieces(idAppel), chargerTousLesLiens(),
+        ]);
+        for (const p of anciennesPieces) {
+          await apiFetch(`/api/pieces-requises/${p.idPiece}`, { method: "DELETE" });
+        }
+        for (const l of filtrerLiens(tousLiens, idAppel)) {
+          await apiFetch(`/api/appel-offre-criteres/${l.idAppelOffreCritere}`, { method: "DELETE" });
+        }
+      }
+
+      for (const piece of piecesValides) {
+        await apiFetch(`/api/pieces-requises/appel-offre/${idAppel}`, {
+          method: "POST",
+          body: JSON.stringify({
+            nomPiece: piece.nomPiece.trim(),
+            description: piece.description?.trim() || null,
+            obligatoire: !!piece.obligatoire,
+          }),
+        });
+      }
+
+      for (const critere of criteresForm) {
+        await apiFetch("/api/appel-offre-criteres", {
+          method: "POST",
+          body: JSON.stringify({
+            ponderation: Number(critere.ponderation),
+            appelOffre: { idAppelOffre: Number(idAppel) },
+            critere: { idCritere: Number(critere.idCritere) },
+          }),
+        });
+      }
+
+      setSuccessMessage(
+        editingId
+          ? "Appel d'offres, pièces et critères modifiés avec succès."
+          : `Appel d'offres ${payload.reference} créé avec ses pièces et critères (statut Brouillon).`
+      );
       setModalOpen(false);
       setForm(EMPTY_FORM);
+      setPiecesForm([{ ...PIECE_VIDE }]);
+      setCriteresForm([]);
       setEditingId(null);
       await chargerDonnees(false);
     } catch (err) {
-      setModalError(err.message);
+      // Appel créé mais pièces/critères en échec : on passe en modification pour réessayer sans doublon
+      if (idAppel && creation) {
+        setEditingId(idAppel);
+        setModalError(
+          `L'appel d'offres ${payload.reference} a été créé en brouillon, mais l'enregistrement des pièces/critères a échoué : ` +
+          `${err.message}. Cliquez de nouveau sur « Enregistrer » pour réessayer.`
+        );
+        chargerDonnees(false);
+      } else {
+        setModalError(err.message || "Une erreur est survenue pendant l'enregistrement.");
+      }
     } finally {
       setSaving(false);
     }
@@ -535,18 +783,44 @@ const parMois = useMemo(() => {
 
   /* ----- actions ----- */
 
-  const ACTIONS = {
-    publier: { label: "Publier", message: "Appel d'offres publié avec succès.", text: "Il deviendra visible et ouvert aux dépôts d'offres." },
-    cloturer: { label: "Clôturer", message: "Appel d'offres clôturé avec succès.", text: "Les dépôts d'offres ne seront plus acceptés." },
-    annuler: { label: "Annuler", message: "Appel d'offres annulé avec succès.", text: "Cette action met fin à la procédure.", danger: true },
-    attribuer: { label: "Attribuer", message: "Appel d'offres attribué avec succès.", text: "Le marché sera marqué comme attribué." },
-  };
-
   const demanderConfirmation = (config) => setConfirmState(config);
 
-  const executerAction = (appel, action) => {
+  const controlerPublication = async (appel) => {
+    if (!appel.dateLimiteDepot || new Date(appel.dateLimiteDepot) <= new Date()) {
+      return "La date limite de dépôt est dépassée : modifiez le dossier avant de publier.";
+    }
+    if (!appel.categorieMarche) return "La catégorie du marché est obligatoire.";
+    if (appel.typeMarche === "FOURNITURE" && !(Number(appel.montantEstime) > 0)) {
+      return "Le montant estimé est obligatoire pour une fourniture.";
+    }
+    const pieces = await chargerPieces(appel.idAppelOffre);
+    if (!pieces.length) return "Ajoutez au moins une pièce requise avant de publier (bouton Modifier).";
+    const liens = filtrerLiens(await chargerTousLesLiens(), appel.idAppelOffre);
+    if (!liens.length) return "Ajoutez au moins un critère d'évaluation avant de publier (bouton Modifier).";
+    const total = sommePonderations(liens);
+    if (Math.abs(total - 100) > 0.01) {
+      return `La somme des pondérations des critères est de ${total.toFixed(2)} % : elle doit être égale à 100 %.`;
+    }
+    return "";
+  };
+
+  const executerAction = async (appel, action) => {
     const cfg = ACTIONS[action];
     if (!cfg) return;
+
+    if (action === "publier") {
+      setError("");
+      setBusyId(appel.idAppelOffre);
+      try {
+        const probleme = await controlerPublication(appel);
+        if (probleme) { setError(probleme); return; }
+      } catch (err) {
+        setError("Vérification impossible : " + err.message);
+        return;
+      } finally {
+        setBusyId(null);
+      }
+    }
 
     demanderConfirmation({
       title: `${cfg.label} cet appel d'offres ?`,
@@ -576,22 +850,50 @@ const parMois = useMemo(() => {
     }
     demanderConfirmation({
       title: "Supprimer ce brouillon ?",
-      message: `« ${appel.objet} » sera supprimé définitivement.`,
+      message: `« ${appel.objet} » sera supprimé définitivement avec ses pièces requises et ses critères.`,
       confirmLabel: "Supprimer",
       danger: true,
       onConfirm: async () => {
+        setError("");
+        setBusyId(appel.idAppelOffre);
         try {
+          const [pieces, tousLiens] = await Promise.all([
+            chargerPieces(appel.idAppelOffre), chargerTousLesLiens(),
+          ]);
+          for (const p of pieces) {
+            await apiFetch(`/api/pieces-requises/${p.idPiece}`, { method: "DELETE" });
+          }
+          for (const l of filtrerLiens(tousLiens, appel.idAppelOffre)) {
+            await apiFetch(`/api/appel-offre-criteres/${l.idAppelOffreCritere}`, { method: "DELETE" });
+          }
           await apiFetch(`/api/appel-offres/${appel.idAppelOffre}`, { method: "DELETE" });
           setSuccessMessage("Appel d'offres supprimé avec succès.");
           await chargerDonnees(false);
         } catch (err) {
           setError(err.message);
+        } finally {
+          setBusyId(null);
         }
       },
     });
   };
 
-  const afficherDetail = (appel) => { setSelectedAppel(appel); setDetailOpen(true); };
+  const afficherDetail = async (appel) => {
+    setSelectedAppel(appel);
+    setDetailOpen(true);
+    setDetailData({ loading: true, pieces: [], criteres: [], error: "" });
+    try {
+      const [pieces, tousLiens] = await Promise.all([
+        chargerPieces(appel.idAppelOffre), chargerTousLesLiens(),
+      ]);
+      setDetailData({
+        loading: false, pieces,
+        criteres: filtrerLiens(tousLiens, appel.idAppelOffre), error: "",
+      });
+    } catch (err) {
+      setDetailData({ loading: false, pieces: [], criteres: [], error: err.message });
+    }
+  };
 
   const deconnexion = async () => {
     try { await apiFetch("/api/auth/logout", { method: "POST" }); }
@@ -753,9 +1055,11 @@ const parMois = useMemo(() => {
           <div className="resp-header-right">
             <div className="resp-header-date">
               <CalendarDays size={16} />
-              {new Date().toLocaleDateString("fr-FR", {
-                weekday: "long", day: "numeric", month: "long", year: "numeric",
-              })}
+              {maintenant
+                ? maintenant.toLocaleDateString("fr-FR", {
+                    weekday: "long", day: "numeric", month: "long", year: "numeric",
+                  })
+                : ""}
             </div>
 
             <button
@@ -888,7 +1192,6 @@ const parMois = useMemo(() => {
               ))}
             </div>
 
-            {/* GRAPHIQUES */}
             <div className="rx-two">
               <div className="resp-panel resp-chart-panel">
                 <div className="resp-panel-header">
@@ -979,7 +1282,6 @@ const parMois = useMemo(() => {
               </div>
             </div>
 
-            {/* DERNIERS APPELS */}
             <div className="resp-panel resp-table-panel">
               <div className="resp-panel-header">
                 <div>
@@ -1142,7 +1444,7 @@ const parMois = useMemo(() => {
             <div className="resp-page-intro">
               <div>
                 <h2>Publication des appels d'offres</h2>
-                <p>Vérifiez chaque brouillon, puis publiez-le pour ouvrir les dépôts d'offres.</p>
+                <p>Vérifiez chaque brouillon, puis publiez-le pour l'ouvrir aux soumissionnaires.</p>
               </div>
               <button className="resp-primary-button" onClick={ouvrirCreation}>
                 <Plus size={18} /> Créer un appel
@@ -1165,21 +1467,13 @@ const parMois = useMemo(() => {
             </div>
 
             <h3 className="rx-section-title">
-              Brouillons prêts à publier <span>{aPublier.length}</span>
+              Brouillons à publier <span>{aPublier.length}</span>
             </h3>
 
             <div className="rx-pub-grid">
               {aPublier.map((appel) => {
-                const dateOk = appel.dateLimiteDepot && new Date(appel.dateLimiteDepot) > new Date();
-                const categorieOk = Boolean(appel.categorieMarche);
-                const montantOk = appel.typeMarche !== "FOURNITURE" || Number(appel.montantEstime) > 0;
-                const pret = dateOk && categorieOk && montantOk;
-
-                const verifs = [
-                  [categorieOk, "Catégorie renseignée"],
-                  [montantOk, appel.typeMarche === "FOURNITURE" ? "Montant estimé renseigné" : "Montant non requis (service)"],
-                  [dateOk, dateOk ? "Date limite dans le futur" : "Date limite dépassée : modifiez le dossier"],
-                ];
+                const { verifs, pret } = analyserBrouillon(appel, completude[appel.idAppelOffre]);
+                const occupe = busyId === appel.idAppelOffre;
 
                 return (
                   <article className="rx-pub-card is-draft" key={appel.idAppelOffre}>
@@ -1206,41 +1500,29 @@ const parMois = useMemo(() => {
                       ))}
                     </ul>
 
-                   <div className="rx-pub-actions">
-                    <button
-                      type="button"
-                      className="rx-btn-publish"
-                      disabled={!pret || busyId === appel.idAppelOffre}
-                      onClick={() => executerAction(appel, "publier")}
-                      title={!pret ? "Complétez les informations obligatoires avant publication" : "Publier cet appel d'offres"}
-                    >
-                      {busyId === appel.idAppelOffre ? (
-                        <RefreshCw size={17} className="resp-spin" />
-                      ) : (
-                        <Send size={17} />
-                      )}
-                      {busyId === appel.idAppelOffre ? "Publication..." : "Publier"}
-                    </button>
+                    <div className="rx-pub-actions">
+                      <button
+                        type="button"
+                        className="rx-btn-publish"
+                        disabled={!pret || occupe}
+                        onClick={() => executerAction(appel, "publier")}
+                        title={!pret ? "Complétez les informations obligatoires avant publication" : "Publier cet appel d'offres"}
+                      >
+                        {occupe ? <RefreshCw size={17} className="resp-spin" /> : <Send size={17} />}
+                        {occupe ? "Vérification..." : "Publier"}
+                      </button>
 
-                    <button
-                      type="button"
-                      className="rx-btn-ghost"
-                      onClick={() => ouvrirModification(appel)}
-                      disabled={busyId === appel.idAppelOffre}
-                    >
-                      <Pencil size={16} />
-                      Modifier
-                    </button>
+                      <button
+                        type="button" className="rx-btn-ghost"
+                        onClick={() => ouvrirModification(appel)} disabled={occupe}
+                      >
+                        <Pencil size={16} /> Modifier
+                      </button>
 
-                    <button
-                      type="button"
-                      className="rx-btn-ghost"
-                      onClick={() => afficherDetail(appel)}
-                    >
-                      <Eye size={16} />
-                      Aperçu
-                    </button>
-                  </div>
+                      <button type="button" className="rx-btn-ghost" onClick={() => afficherDetail(appel)}>
+                        <Eye size={16} /> Aperçu
+                      </button>
+                    </div>
                   </article>
                 );
               })}
@@ -1411,7 +1693,7 @@ const parMois = useMemo(() => {
         )}
 
         <footer className="resp-footer">
-          <span>© {new Date().getFullYear()} SPAT - Port de Toamasina</span>
+          <span>© {maintenant ? maintenant.getFullYear() : ""} SPAT - Port de Toamasina</span>
           <span>Plateforme de gestion des appels d'offres</span>
         </footer>
       </main>
@@ -1424,14 +1706,14 @@ const parMois = useMemo(() => {
               <div>
                 <span className="resp-modal-kicker">GESTION DES MARCHÉS</span>
                 <h2>{editingId ? "Modifier l'appel d'offres" : "Nouvel appel d'offres"}</h2>
-                <p>Complétez les informations du dossier.</p>
+                <p>Référence, objet, pièces requises, critères d'évaluation et date limite de dépôt.</p>
               </div>
               <button className="resp-modal-close" onClick={fermerModal}><X size={21} /></button>
             </div>
 
             <form onSubmit={enregistrerAppel}>
               {modalError && (
-                <div className="rx-modal-error"><AlertTriangle size={17} /> {modalError}</div>
+                <div className="rx-modal-error"><AlertTriangle size={17} /> <span>{modalError}</span></div>
               )}
 
               <div className="resp-form-grid">
@@ -1445,6 +1727,7 @@ const parMois = useMemo(() => {
                     maxLength={50}
                     required
                   />
+                  <p className="rx-field-hint">Saisie par vos soins. Elle doit être unique.</p>
                 </div>
 
                 <div className="resp-form-group full">
@@ -1510,19 +1793,143 @@ const parMois = useMemo(() => {
                 </div>
               </div>
 
+              {/* PIECES REQUISES */}
+              <section className="rx-builder-section">
+                <div className="rx-builder-heading">
+                  <div>
+                    <h3><ClipboardList size={19} /> Pièces requises pour le dépôt</h3>
+                    <p>Le soumissionnaire devra joindre ces documents à son offre.</p>
+                  </div>
+                  <button type="button" className="rx-btn-add" onClick={ajouterPieceForm}>
+                    <Plus size={16} /> Ajouter une pièce
+                  </button>
+                </div>
+                <div className="rx-builder-list">
+                  {piecesForm.map((piece, index) => (
+                    <div className="rx-builder-item" key={`piece-${index}`}>
+                      <div className="rx-builder-number">{index + 1}</div>
+                      <div className="rx-builder-fields">
+                        <label>
+                          Nom de la pièce *
+                          <input
+                            value={piece.nomPiece}
+                            onChange={(e) => modifierPieceForm(index, "nomPiece", e.target.value)}
+                            placeholder="Ex. : Registre de commerce" maxLength={150}
+                          />
+                        </label>
+                        <label>
+                          Description (facultatif)
+                          <input
+                            value={piece.description}
+                            onChange={(e) => modifierPieceForm(index, "description", e.target.value)}
+                            placeholder="Précision sur le document attendu"
+                          />
+                        </label>
+                        <label className="rx-required-check">
+                          <input
+                            type="checkbox" checked={!!piece.obligatoire}
+                            onChange={(e) => modifierPieceForm(index, "obligatoire", e.target.checked)}
+                          />
+                          Document obligatoire
+                        </label>
+                      </div>
+                      <button
+                        type="button" className="rx-remove-item"
+                        onClick={() => supprimerPieceForm(index)} title="Supprimer cette pièce"
+                      >
+                        <Trash2 size={17} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              {/* CRITERES D'EVALUATION (grille créée par l'administrateur) */}
+              <section className="rx-builder-section">
+                <div className="rx-builder-heading">
+                  <div>
+                    <h3><ChartNoAxesCombined size={19} /> Critères d'évaluation</h3>
+                    <p>Choisissez parmi la grille d'évaluation définie par l'administrateur. Le total doit faire 100 %.</p>
+                  </div>
+                  <button
+                    type="button" className="rx-btn-add" onClick={ajouterCritereForm}
+                    disabled={criteresDisponibles.length === 0}
+                  >
+                    <Plus size={16} /> Ajouter un critère
+                  </button>
+                </div>
+
+                {criteresDisponibles.length === 0 && (
+                  <p className="rx-builder-empty">
+                    Aucun critère disponible. L'administrateur doit d'abord créer la grille d'évaluation.
+                  </p>
+                )}
+
+                <div className="rx-builder-list">
+                  {criteresForm.map((critere, index) => {
+                    const ref = criteresDisponibles.find((c) => String(c.idCritere) === String(critere.idCritere));
+                    const dejaChoisis = criteresForm
+                      .filter((_, i) => i !== index).map((c) => String(c.idCritere));
+                    return (
+                      <div className="rx-criterion-item" key={`critere-${index}`}>
+                        <label>
+                          Critère
+                          <select value={critere.idCritere} onChange={(e) => choisirCritereForm(index, e.target.value)}>
+                            <option value="">Sélectionner un critère</option>
+                            {criteresDisponibles.map((c) => (
+                              <option
+                                key={c.idCritere} value={c.idCritere}
+                                disabled={dejaChoisis.includes(String(c.idCritere))}
+                              >
+                                {c.nomCritere}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          Pondération (%)
+                          <input
+                            type="number" min="0.01" max="100" step="0.01"
+                            value={critere.ponderation}
+                            onChange={(e) => modifierPonderationForm(index, e.target.value)}
+                            placeholder="Ex. : 40"
+                          />
+                        </label>
+                        <button
+                          type="button" className="rx-remove-item"
+                          onClick={() => supprimerCritereForm(index)} title="Retirer ce critère"
+                        >
+                          <Trash2 size={17} />
+                        </button>
+                        {ref?.description && <p className="rx-criterion-desc">{ref.description}</p>}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {criteresForm.length > 0 && (
+                  <div className={`rx-weight-total ${Math.abs(totalPonderations - 100) < 0.01 ? "ok" : "ko"}`}>
+                    <span>Total des pondérations</span>
+                    <strong>{totalPonderations.toFixed(2)} % / 100 %</strong>
+                  </div>
+                )}
+              </section>
+
               <div className="resp-form-note">
                 <AlertTriangle size={16} />
                 La référence est saisie par vos soins et doit être unique. Le dossier est enregistré au statut Brouillon ;
-                publiez-le ensuite depuis la page Publication.
+                pour être publié, il doit contenir au moins une pièce requise et des critères dont le total fait 100 %.
               </div>
 
               <div className="resp-modal-actions">
                 <button type="button" className="resp-secondary-button" onClick={fermerModal} disabled={saving}>
                   Annuler
                 </button>
-                <button type="submit" className="resp-primary-button" disabled={saving}>
+                <button type="submit" className="resp-primary-button" disabled={saving || !editReady}>
                   {saving ? (
                     <><RefreshCw size={17} className="resp-spin" /> Enregistrement...</>
+                  ) : !editReady && !modalError ? (
+                    <><RefreshCw size={17} className="resp-spin" /> Chargement...</>
                   ) : (
                     <><CheckCircle2 size={18} /> {editingId ? "Enregistrer les modifications" : "Créer l'appel d'offres"}</>
                   )}
@@ -1566,6 +1973,49 @@ const parMois = useMemo(() => {
                 <span>Description</span>
                 <p>{selectedAppel.description || "Aucune description disponible."}</p>
               </div>
+            </div>
+
+            <div className="rx-detail-block">
+              <h4><ClipboardList size={17} /> Pièces requises</h4>
+              {detailData.loading ? (
+                <p className="rx-muted">Chargement...</p>
+              ) : detailData.error ? (
+                <p className="rx-muted">Impossible de charger : {detailData.error}</p>
+              ) : detailData.pieces.length === 0 ? (
+                <p className="rx-muted">Aucune pièce requise définie.</p>
+              ) : (
+                <ul className="rx-detail-list">
+                  {detailData.pieces.map((p) => (
+                    <li key={p.idPiece}>
+                      <div>
+                        {p.nomPiece}
+                        {p.description && <small>{p.description}</small>}
+                      </div>
+                      <span className={`rx-tag ${p.obligatoire === false ? "opt" : ""}`}>
+                        {p.obligatoire === false ? "Facultatif" : "Obligatoire"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="rx-detail-block">
+              <h4><ChartNoAxesCombined size={17} /> Critères d'évaluation</h4>
+              {detailData.loading ? (
+                <p className="rx-muted">Chargement...</p>
+              ) : detailData.error ? null : detailData.criteres.length === 0 ? (
+                <p className="rx-muted">Aucun critère d'évaluation défini.</p>
+              ) : (
+                <ul className="rx-detail-list">
+                  {detailData.criteres.map((l) => (
+                    <li key={l.idAppelOffreCritere}>
+                      <div>{nomCritereDuLien(l)}</div>
+                      <span className="rx-tag">{Number(l.ponderation)} %</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
 
             <div className="resp-modal-actions">
