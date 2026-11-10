@@ -15,7 +15,9 @@ import java.util.Optional;
 public interface OffreRepository extends JpaRepository<Offre, Long> {
 
     // Offres déposées par un soumissionnaire
-    List<Offre> findByUtilisateurOrderByIdOffreDesc(Utilisateur utilisateur);
+    List<Offre> findByUtilisateurOrderByIdOffreDesc(
+            Utilisateur utilisateur
+    );
 
     // Offres déposées pour un appel d'offres
     List<Offre> findByAppelOffre(AppelOffre appelOffre);
@@ -27,10 +29,21 @@ public interface OffreRepository extends JpaRepository<Offre, Long> {
     );
 
     // Recherche par accusé de réception
-    Optional<Offre> findByAccuseDeReception(String accuseDeReception);
+    Optional<Offre> findByAccuseDeReception(
+            String accuseDeReception
+    );
 
     // Recherche des offres par identifiant d'appel d'offres
     List<Offre> findByAppelOffre_IdAppelOffreOrderByIdOffreDesc(
             Long idAppelOffre
+    );
+
+    // Rechercher les offres par statut
+    List<Offre> findByStatutIn(List<String> statuts);
+
+    // Rechercher les offres d'un appel d'offres et d'un statut
+    List<Offre> findByAppelOffre_IdAppelOffreAndStatut(
+            Long idAppelOffre,
+            String statut
     );
 }

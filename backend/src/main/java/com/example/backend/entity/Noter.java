@@ -1,8 +1,8 @@
+
 package com.example.backend.entity;
 
 import jakarta.persistence.*;
 import java.math.BigDecimal;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @Entity
@@ -14,46 +14,87 @@ public class Noter {
     @Column(name = "id_noter")
     private Long idNoter;
 
-    @Column(name = "note", nullable = false, precision = 4, scale = 2)
+    @Column(name = "note", precision = 5, scale = 2)
     private BigDecimal note;
 
-    @Column(name = "commentaire", columnDefinition = "text")
+    @Column(name = "commentaire", columnDefinition = "TEXT")
     private String commentaire;
 
-    @Column(name = "date_note", nullable = false, insertable = false, updatable = false)
+    @Column(
+            name = "date_note",
+            insertable = false,
+            updatable = false
+    )
     private LocalDateTime dateNote;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "id_utilisateur", nullable = true)
+    @JoinColumn(name = "id_utilisateur", nullable = false)
     private Utilisateur utilisateur;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "id_offre", nullable = true)
+    @JoinColumn(name = "id_offre", nullable = false)
     private Offre offre;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "id_critere", nullable = true)
+    @JoinColumn(name = "id_critere", nullable = false)
     private CritereEvaluation critere;
 
-    public Long getIdNoter() { return idNoter; }
-    public void setIdNoter(Long value) { this.idNoter = value; }
+    public Noter() {
+    }
 
-    public BigDecimal getNote() { return note; }
-    public void setNote(BigDecimal value) { this.note = value; }
+    public Long getIdNoter() {
+        return idNoter;
+    }
 
-    public String getCommentaire() { return commentaire; }
-    public void setCommentaire(String value) { this.commentaire = value; }
+    public void setIdNoter(Long idNoter) {
+        this.idNoter = idNoter;
+    }
 
-    public LocalDateTime getDateNote() { return dateNote; }
-    public void setDateNote(LocalDateTime value) { this.dateNote = value; }
+    public BigDecimal getNote() {
+        return note;
+    }
 
-    public Utilisateur getUtilisateur() { return utilisateur; }
-    public void setUtilisateur(Utilisateur value) { this.utilisateur = value; }
+    public void setNote(BigDecimal note) {
+        this.note = note;
+    }
 
-    public Offre getOffre() { return offre; }
-    public void setOffre(Offre value) { this.offre = value; }
+    public String getCommentaire() {
+        return commentaire;
+    }
 
-    public CritereEvaluation getCritere() { return critere; }
-    public void setCritere(CritereEvaluation value) { this.critere = value; }
+    public void setCommentaire(String commentaire) {
+        this.commentaire = commentaire;
+    }
 
+    public LocalDateTime getDateNote() {
+        return dateNote;
+    }
+
+    public void setDateNote(LocalDateTime dateNote) {
+        this.dateNote = dateNote;
+    }
+
+    public Utilisateur getUtilisateur() {
+        return utilisateur;
+    }
+
+    public void setUtilisateur(Utilisateur utilisateur) {
+        this.utilisateur = utilisateur;
+    }
+
+    public Offre getOffre() {
+        return offre;
+    }
+
+    public void setOffre(Offre offre) {
+        this.offre = offre;
+    }
+
+    public CritereEvaluation getCritere() {
+        return critere;
+    }
+
+    public void setCritere(CritereEvaluation critere) {
+        this.critere = critere;
+    }
 }
