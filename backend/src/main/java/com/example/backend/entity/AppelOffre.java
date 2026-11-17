@@ -17,6 +17,10 @@ import java.time.LocalDateTime;
                 )
         }
 )
+@JsonIgnoreProperties({
+        "hibernateLazyInitializer",
+        "handler"
+})
 public class AppelOffre {
 
     @Id

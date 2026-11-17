@@ -83,6 +83,20 @@ public class SecurityConfig {
                                 "/api/utilisateurs/**"
                         ).hasRole("ADMINISTRATEUR")
 
+                        // Dépôt public d'une offre sans connexion
+                        .requestMatchers(
+                                HttpMethod.POST,
+                                "/api/offres/deposer"
+                        ).permitAll()
+
+                        // Consultation publique des appels publiés (lien Facebook)
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/api/appel-offres/publications",
+                                "/api/appel-offres/publications/*",
+                                "/api/pieces-requises/public/**"
+                        ).permitAll()
+
                         // Toutes les autres routes nécessitent une authentification
                         .anyRequest().authenticated()
                 )

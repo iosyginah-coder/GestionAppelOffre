@@ -9,8 +9,6 @@ import jakarta.persistence.PersistenceContext;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -39,7 +37,6 @@ public class OffreService {
 
     private final OffreRepository offreRepository;
     private final AppelOffreRepository appelOffreRepository;
-    private final UtilisateurRepository utilisateurRepository;
     private final PieceRequiseRepository pieceRepository;
     private final DocumentOffreRepository documentRepository;
     private final Path dossierUpload;
@@ -47,14 +44,12 @@ public class OffreService {
     public OffreService(
             OffreRepository offreRepository,
             AppelOffreRepository appelOffreRepository,
-            UtilisateurRepository utilisateurRepository,
             PieceRequiseRepository pieceRepository,
             DocumentOffreRepository documentRepository,
             @Value("${app.upload.dir:uploads}") String dossier
     ) {
         this.offreRepository = offreRepository;
         this.appelOffreRepository = appelOffreRepository;
-        this.utilisateurRepository = utilisateurRepository;
         this.pieceRepository = pieceRepository;
         this.documentRepository = documentRepository;
         this.dossierUpload = Paths.get(dossier)
@@ -70,91 +65,54 @@ public class OffreService {
     }
 
     // =====================================================
-    // RECUPERER LE SOUMISSIONNAIRE CONNECTE
-    // =====================================================
-
-    private Utilisateur soumissionnaireConnecte() {
-
-        Authentication auth =
-                SecurityContextHolder.getContext().getAuthentication();
-
-        if (auth == null
-                || !auth.isAuthenticated()
-                || auth.getPrincipal() == null
-                || "anonymousUser".equals(auth.getPrincipal())) {
-
-            throw erreur(
-                    HttpStatus.UNAUTHORIZED,
-                    "Vous devez être connecté."
-            );
-        }
-
-        String matricule = auth.getPrincipal().toString();
-
-        Utilisateur user = utilisateurRepository
-                .findByMatricule(matricule)
-                .orElseThrow(() -> erreur(
-                        HttpStatus.NOT_FOUND,
-                        "Utilisateur introuvable."
-                ));
-
-        if (!"SOUMISSIONNAIRE".equalsIgnoreCase(user.getRole())) {
-            throw erreur(
-                    HttpStatus.FORBIDDEN,
-                    "Seul un soumissionnaire peut déposer une offre."
-            );
-        }
-
-        if (!"ACTIF".equalsIgnoreCase(user.getStatut())) {
-            throw erreur(
-                    HttpStatus.FORBIDDEN,
-                    "Votre compte n'est pas actif."
-            );
-        }
-
-        return user;
-    }
-
-    // =====================================================
-    // AFFICHER LES OFFRES DU SOUMISSIONNAIRE CONNECTE
-    // =====================================================
-
-    @Transactional(readOnly = true)
-    public List<Offre> mesOffres() {
-
-        Utilisateur user = soumissionnaireConnecte();
-
-        return offreRepository
-                .findByUtilisateurOrderByIdOffreDesc(user);
-    }
-
-    // =====================================================
-    // DEPOSER UNE OFFRE
+    // DEPOT PUBLIC D'UNE OFFRE SANS CONNEXION
     // =====================================================
 
     public Offre deposer(
             Long idAppelOffre,
             BigDecimal montant,
+            String nomSoumissionnaire,
+            String entreprise,
+            String emailSoumissionnaire,
+            String telephoneSoumissionnaire,
             List<Long> idsPieces,
             List<MultipartFile> fichiers
     ) {
 
-        Utilisateur soumissionnaire = soumissionnaireConnecte();
-
+        // Vérifier les informations obligatoires
         if (idAppelOffre == null) {
-            throw erreur(
-                    HttpStatus.BAD_REQUEST,
-                    "L'appel d'offres est obligatoire."
-            );
+            throw erreur(HttpStatus.BAD_REQUEST,
+                    "L'appel d'offres est obligatoire.");
         }
 
         if (montant == null || montant.compareTo(BigDecimal.ZERO) <= 0) {
-            throw erreur(
-                    HttpStatus.BAD_REQUEST,
-                    "Le montant proposé doit être supérieur à zéro."
-            );
+            throw erreur(HttpStatus.BAD_REQUEST,
+                    "Le montant proposé doit être supérieur à zéro.");
         }
 
+        if (nomSoumissionnaire == null || nomSoumissionnaire.isBlank()) {
+            throw erreur(HttpStatus.BAD_REQUEST,
+                    "Le nom du soumissionnaire est obligatoire.");
+        }
+
+        if (entreprise == null || entreprise.isBlank()) {
+            throw erreur(HttpStatus.BAD_REQUEST,
+                    "Le nom de l'entreprise est obligatoire.");
+        }
+
+        if (emailSoumissionnaire == null
+                || !emailSoumissionnaire.matches("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")) {
+            throw erreur(HttpStatus.BAD_REQUEST,
+                    "Veuillez saisir une adresse e-mail valide.");
+        }
+
+        if (telephoneSoumissionnaire == null
+                || telephoneSoumissionnaire.isBlank()) {
+            throw erreur(HttpStatus.BAD_REQUEST,
+                    "Le numéro de téléphone est obligatoire.");
+        }
+
+        // Vérifier l'appel d'offres
         AppelOffre appel = appelOffreRepository
                 .findById(idAppelOffre)
                 .orElseThrow(() -> erreur(
@@ -163,34 +121,21 @@ public class OffreService {
                 ));
 
         if (!"PUBLIE".equalsIgnoreCase(appel.getStatut())) {
-            throw erreur(
-                    HttpStatus.CONFLICT,
-                    "Cet appel d'offres n'est pas ouvert aux dépôts."
-            );
+            throw erreur(HttpStatus.CONFLICT,
+                    "Cet appel d'offres n'est pas ouvert aux dépôts.");
         }
 
         if (appel.getDateLimiteDepot() == null
                 || !appel.getDateLimiteDepot().isAfter(LocalDateTime.now())) {
-
-            throw erreur(
-                    HttpStatus.CONFLICT,
-                    "La date limite de dépôt est dépassée."
-            );
-        }
-
-        if (offreRepository.existsByAppelOffreAndUtilisateur(
-                appel,
-                soumissionnaire
-        )) {
-            throw erreur(
-                    HttpStatus.CONFLICT,
-                    "Vous avez déjà déposé une offre pour cet appel d'offres."
-            );
+            throw erreur(HttpStatus.CONFLICT,
+                    "La date limite de dépôt est dépassée.");
         }
 
         // Récupérer les pièces requises pour cet appel d'offres
         List<PieceRequise> pieces =
-                pieceRepository.findByAppelOffre_IdAppelOffre(idAppelOffre);
+                pieceRepository.findByAppelOffre_IdAppelOffreOrderByIdPieceAsc(
+                        idAppelOffre
+                );
 
         List<Long> ids = idsPieces == null
                 ? Collections.emptyList()
@@ -201,10 +146,8 @@ public class OffreService {
                 : fichiers;
 
         if (ids.size() != fics.size()) {
-            throw erreur(
-                    HttpStatus.BAD_REQUEST,
-                    "Les fichiers ne correspondent pas aux pièces indiquées."
-            );
+            throw erreur(HttpStatus.BAD_REQUEST,
+                    "Les fichiers ne correspondent pas aux pièces indiquées.");
         }
 
         // Associer chaque pièce à son fichier
@@ -216,10 +159,8 @@ public class OffreService {
             MultipartFile fichier = fics.get(i);
 
             if (idPiece == null) {
-                throw erreur(
-                        HttpStatus.BAD_REQUEST,
-                        "Identifiant de pièce invalide."
-                );
+                throw erreur(HttpStatus.BAD_REQUEST,
+                        "Identifiant de pièce invalide.");
             }
 
             PieceRequise piece = pieces.stream()
@@ -231,38 +172,40 @@ public class OffreService {
                     ));
 
             if (parPiece.containsKey(idPiece)) {
-                throw erreur(
-                        HttpStatus.BAD_REQUEST,
+                throw erreur(HttpStatus.BAD_REQUEST,
                         "La pièce " + piece.getNomPiece()
-                                + " a été envoyée deux fois."
-                );
+                                + " a été envoyée deux fois.");
             }
 
             validerFichier(fichier, piece.getNomPiece());
             parPiece.put(idPiece, fichier);
         }
 
-        // Vérifier que toutes les pièces obligatoires sont présentes
+        // Vérifier toutes les pièces obligatoires
         for (PieceRequise piece : pieces) {
 
             if (Boolean.TRUE.equals(piece.getObligatoire())
                     && !parPiece.containsKey(piece.getIdPiece())) {
 
-                throw erreur(
-                        HttpStatus.BAD_REQUEST,
+                throw erreur(HttpStatus.BAD_REQUEST,
                         "La pièce obligatoire "
                                 + piece.getNomPiece()
-                                + " est manquante."
-                );
+                                + " est manquante.");
             }
         }
 
-        // Créer l'offre
+        // Créer l'offre sans utilisateur connecté
         Offre offre = new Offre();
 
         offre.setMontant(montant);
         offre.setAppelOffre(appel);
-        offre.setUtilisateur(soumissionnaire);
+        offre.setUtilisateur(null);
+
+        offre.setNomSoumissionnaire(nomSoumissionnaire.trim());
+        offre.setEntreprise(entreprise.trim());
+        offre.setEmailSoumissionnaire(emailSoumissionnaire.trim());
+        offre.setTelephoneSoumissionnaire(telephoneSoumissionnaire.trim());
+
         offre.setStatut("DEPOSEE");
 
         offre.setAccuseDeReception(
@@ -284,10 +227,8 @@ public class OffreService {
                 .normalize();
 
         if (!dossier.startsWith(dossierUpload)) {
-            throw erreur(
-                    HttpStatus.BAD_REQUEST,
-                    "Chemin de stockage invalide."
-            );
+            throw erreur(HttpStatus.BAD_REQUEST,
+                    "Chemin de stockage invalide.");
         }
 
         try {
@@ -316,10 +257,8 @@ public class OffreService {
                 Path cible = dossier.resolve(stocke).normalize();
 
                 if (!cible.startsWith(dossier)) {
-                    throw erreur(
-                            HttpStatus.BAD_REQUEST,
-                            "Nom de fichier invalide."
-                    );
+                    throw erreur(HttpStatus.BAD_REQUEST,
+                            "Nom de fichier invalide.");
                 }
 
                 try (InputStream in = fichier.getInputStream()) {
@@ -377,29 +316,23 @@ public class OffreService {
     ) {
 
         if (fichier == null || fichier.isEmpty()) {
-            throw erreur(
-                    HttpStatus.BAD_REQUEST,
-                    "Le fichier de la pièce " + nomPiece + " est vide."
-            );
+            throw erreur(HttpStatus.BAD_REQUEST,
+                    "Le fichier de la pièce " + nomPiece + " est vide.");
         }
 
         if (fichier.getSize() > TAILLE_MAX) {
-            throw erreur(
-                    HttpStatus.BAD_REQUEST,
+            throw erreur(HttpStatus.BAD_REQUEST,
                     "Le fichier de la pièce " + nomPiece
-                            + " dépasse 10 Mo."
-            );
+                            + " dépasse 10 Mo.");
         }
 
         String nom = nettoyerNom(fichier.getOriginalFilename());
         String ext = extension(nom);
 
         if (!EXTENSIONS.contains(ext)) {
-            throw erreur(
-                    HttpStatus.BAD_REQUEST,
+            throw erreur(HttpStatus.BAD_REQUEST,
                     "Format non autorisé pour " + nomPiece
-                            + ". Formats acceptés : PDF, Word, Excel, JPG et PNG."
-            );
+                            + ". Formats acceptés : PDF, Word, Excel, JPG et PNG.");
         }
     }
 
@@ -414,7 +347,6 @@ public class OffreService {
         }
 
         String n = nom.replace("\\", "/");
-
         n = n.substring(n.lastIndexOf('/') + 1);
 
         n = n.replaceAll(

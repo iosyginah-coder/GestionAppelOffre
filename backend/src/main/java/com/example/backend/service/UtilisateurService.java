@@ -6,6 +6,7 @@ import com.example.backend.dto.UtilisateurDTO.ModificationRequest;
 import com.example.backend.entity.Utilisateur;
 import com.example.backend.repository.UtilisateurRepository;
 
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -22,14 +23,14 @@ import java.util.regex.Pattern;
 @Service
 public class UtilisateurService {
 
+    // 1. ROLES AUTORISES
     private static final List<String> ROLES = List.of(
             "ADMINISTRATEUR",
             "RESPONSABLE_MARCHES",
-            "EVALUATEUR",
-            "SOUMISSIONNAIRE"
+            "EVALUATEUR"
     );
 
-    // Seulement deux statuts autorisés
+    // 2. STATUTS AUTORISES
     private static final List<String> STATUTS = List.of(
             "ACTIF",
             "SUSPENDU"
@@ -58,14 +59,15 @@ public class UtilisateurService {
         this.emailService = emailService;
     }
 
-    // 1. OBTENIR TOUS LES UTILISATEURS
+    // 3. OBTENIR TOUS LES UTILISATEURS
 
     @Transactional(readOnly = true)
     public List<Utilisateur> obtenirTous() {
+
         return utilisateurRepository.findAll();
     }
 
-    // 2. OBTENIR UN UTILISATEUR PAR SON ID
+    // 4. OBTENIR UN UTILISATEUR PAR ID
 
     @Transactional(readOnly = true)
     public Utilisateur obtenirParId(Long id) {
@@ -77,7 +79,7 @@ public class UtilisateurService {
                 ));
     }
 
-    // 3. CREER UN UTILISATEUR ET ENVOYER SES IDENTIFIANTS
+    // 5. CREER UN UTILISATEUR
 
     @Transactional
     public Utilisateur creer(CreationRequest request) {
@@ -99,6 +101,7 @@ public class UtilisateurService {
         verifierNom(nomComplet);
         verifierEmail(email);
         verifierRole(role);
+        verifierDepartement(departement);
 
         if (matriculeExiste(matricule)) {
             throw new ResponseStatusException(
@@ -114,16 +117,6 @@ public class UtilisateurService {
             );
         }
 
-        if (!role.equals("SOUMISSIONNAIRE")
-                && !StringUtils.hasText(departement)) {
-
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "Le département est obligatoire pour ce rôle."
-            );
-        }
-
-        // Générer un mot de passe temporaire
         String motDePasseTemporaire =
                 genererMotDePasseTemporaire();
 
@@ -133,12 +126,7 @@ public class UtilisateurService {
         utilisateur.setNomComplet(nomComplet);
         utilisateur.setEmail(email);
         utilisateur.setRole(role);
-
-        utilisateur.setDepartement(
-                StringUtils.hasText(departement)
-                        ? departement
-                        : null
-        );
+        utilisateur.setDepartement(departement);
 
         utilisateur.setMotDePasse(
                 passwordEncoder.encode(motDePasseTemporaire)
@@ -149,8 +137,7 @@ public class UtilisateurService {
         Utilisateur utilisateurEnregistre =
                 utilisateurRepository.saveAndFlush(utilisateur);
 
-        // Envoyer les identifiants au nouvel utilisateur
-        // En cas d'échec, la transaction sera annulée.
+        // Envoyer les identifiants par Gmail
         emailService.envoyerIdentifiants(
                 email,
                 matricule,
@@ -160,7 +147,7 @@ public class UtilisateurService {
         return utilisateurEnregistre;
     }
 
-    // 4. MODIFIER UN UTILISATEUR
+    // 6. MODIFIER UN UTILISATEUR
 
     @Transactional
     public Utilisateur modifier(
@@ -184,6 +171,7 @@ public class UtilisateurService {
         verifierNom(nomComplet);
         verifierEmail(email);
         verifierRole(role);
+        verifierDepartement(departement);
 
         if (emailExiste(email, id)) {
             throw new ResponseStatusException(
@@ -192,29 +180,15 @@ public class UtilisateurService {
             );
         }
 
-        if (!role.equals("SOUMISSIONNAIRE")
-                && !StringUtils.hasText(departement)) {
-
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "Le département est obligatoire pour ce rôle."
-            );
-        }
-
         utilisateur.setNomComplet(nomComplet);
         utilisateur.setEmail(email);
         utilisateur.setRole(role);
-
-        utilisateur.setDepartement(
-                StringUtils.hasText(departement)
-                        ? departement
-                        : null
-        );
+        utilisateur.setDepartement(departement);
 
         return utilisateurRepository.save(utilisateur);
     }
 
-    // 5. CHANGER LE STATUT D'UN UTILISATEUR
+    // 7. CHANGER LE STATUT D'UN UTILISATEUR
 
     @Transactional
     public Utilisateur changerStatut(
@@ -237,17 +211,35 @@ public class UtilisateurService {
         return utilisateurRepository.save(utilisateur);
     }
 
-    // 6. SUPPRIMER UN UTILISATEUR
+    // 8. SUPPRIMER DEFINITIVEMENT UN UTILISATEUR
 
     @Transactional
     public void supprimer(Long id) {
 
         Utilisateur utilisateur = obtenirParId(id);
 
-        utilisateurRepository.delete(utilisateur);
+        try {
+
+            utilisateurRepository.delete(utilisateur);
+
+            // Forcer l'exécution SQL pour détecter
+            // immédiatement les contraintes de clés étrangères.
+            utilisateurRepository.flush();
+
+        } catch (DataIntegrityViolationException e) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Impossible de supprimer cet utilisateur : "
+                            + "il est encore lié à des offres ou à "
+                            + "d'autres données enregistrées. "
+                            + "Conservez son historique ou réaffectez "
+                            + "les données avant sa suppression."
+            );
+        }
     }
 
-    // 7. REINITIALISER LE MOT DE PASSE ET ENVOYER PAR E-MAIL
+    // 9. REINITIALISER LE MOT DE PASSE
 
     @Transactional
     public void reinitialiserMotDePasse(String matricule) {
@@ -265,19 +257,15 @@ public class UtilisateurService {
 
         verifierEmail(utilisateur.getEmail());
 
-        // Générer un nouveau mot de passe temporaire
         String nouveauMotDePasse =
                 genererMotDePasseTemporaire();
 
-        // Enregistrer uniquement le mot de passe chiffré
         utilisateur.setMotDePasse(
                 passwordEncoder.encode(nouveauMotDePasse)
         );
 
         utilisateurRepository.saveAndFlush(utilisateur);
 
-        // Envoyer le mot de passe temporaire à l'utilisateur concerné
-        // Si Gmail échoue, la transaction sera annulée.
         emailService.envoyerIdentifiants(
                 utilisateur.getEmail(),
                 utilisateur.getMatricule(),
@@ -285,7 +273,7 @@ public class UtilisateurService {
         );
     }
 
-    // 8. GENERER UN MOT DE PASSE TEMPORAIRE
+    // 10. GENERER UN MOT DE PASSE TEMPORAIRE
 
     private String genererMotDePasseTemporaire() {
 
@@ -305,7 +293,7 @@ public class UtilisateurService {
         return motDePasse.toString();
     }
 
-    // 9. VERIFIER LE MATRICULE
+    // 11. VERIFIER LE MATRICULE
 
     private void verifierMatricule(String matricule) {
 
@@ -319,11 +307,12 @@ public class UtilisateurService {
         }
     }
 
-    // 10. VERIFIER LE NOM COMPLET
+    // 12. VERIFIER LE NOM
 
     private void verifierNom(String nom) {
 
         if (!StringUtils.hasText(nom)) {
+
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
                     "Le nom complet est obligatoire."
@@ -331,7 +320,7 @@ public class UtilisateurService {
         }
     }
 
-    // 11. VERIFIER L'ADRESSE E-MAIL
+    // 13. VERIFIER L'EMAIL
 
     private void verifierEmail(String email) {
 
@@ -345,28 +334,42 @@ public class UtilisateurService {
         }
     }
 
-    // 12. VERIFIER LE ROLE
+    // 14. VERIFIER LE ROLE
 
     private void verifierRole(String role) {
 
         if (!ROLES.contains(role)) {
+
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
-                    "Le rôle fourni n'est pas valide."
+                    "Rôle invalide. Les rôles autorisés sont : "
+                            + "ADMINISTRATEUR, RESPONSABLE_MARCHES, "
+                            + "EVALUATEUR."
             );
         }
     }
 
-    // 13. VERIFIER SI LE MATRICULE EXISTE
+    // 15. VERIFIER LE DEPARTEMENT
+
+    private void verifierDepartement(String departement) {
+
+        if (!StringUtils.hasText(departement)) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Le département est obligatoire."
+            );
+        }
+    }
+
+    // 16. VERIFIER SI LE MATRICULE EXISTE
 
     private boolean matriculeExiste(String matricule) {
 
         return utilisateurRepository.existsByMatricule(matricule);
     }
 
-    // 14. VERIFIER SI L'E-MAIL EST DEJA UTILISE
-    // idExclu permet de ne pas considérer l'utilisateur modifié
-    // comme un doublon de sa propre adresse.
+    // 17. VERIFIER SI L'EMAIL EST DEJA UTILISE
 
     private boolean emailExiste(String email, Long idExclu) {
 
@@ -383,14 +386,14 @@ public class UtilisateurService {
                 );
     }
 
-    // 15. NETTOYER UNE VALEUR
+    // 18. NETTOYER UNE VALEUR
 
     private String nettoyer(String valeur) {
 
         return valeur == null ? null : valeur.trim();
     }
 
-    // 16. NORMALISER UNE VALEUR
+    // 19. NORMALISER UNE VALEUR
 
     private String normaliser(String valeur) {
 

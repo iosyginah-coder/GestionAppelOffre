@@ -1,3 +1,4 @@
+
 package com.example.backend.controller;
 
 import com.example.backend.dto.UtilisateurDTO;
@@ -25,6 +26,7 @@ public class UtilisateurController {
         this.utilisateurService = utilisateurService;
     }
 
+    // 1. AFFICHER TOUS LES UTILISATEURS
     @GetMapping
     public ResponseEntity<List<UtilisateurDTO.Reponse>> list() {
 
@@ -37,6 +39,7 @@ public class UtilisateurController {
         return ResponseEntity.ok(utilisateurs);
     }
 
+    // 2. AFFICHER UN UTILISATEUR PAR ID
     @GetMapping("/{id}")
     public ResponseEntity<UtilisateurDTO.Reponse> get(
             @PathVariable Long id) {
@@ -49,6 +52,7 @@ public class UtilisateurController {
         );
     }
 
+    // 3. CREER UN UTILISATEUR
     @PostMapping
     public ResponseEntity<UtilisateurDTO.Reponse> create(
             @RequestBody UtilisateurDTO.CreationRequest request) {
@@ -61,6 +65,7 @@ public class UtilisateurController {
         );
     }
 
+    // 4. MODIFIER UN UTILISATEUR
     @PutMapping("/{id}")
     public ResponseEntity<UtilisateurDTO.Reponse> update(
             @PathVariable Long id,
@@ -74,6 +79,7 @@ public class UtilisateurController {
         );
     }
 
+    // 5. CHANGER LE STATUT
     @PatchMapping("/{id}/statut")
     public ResponseEntity<UtilisateurDTO.Reponse> changeStatus(
             @PathVariable Long id,
@@ -94,6 +100,7 @@ public class UtilisateurController {
         );
     }
 
+    // 6. SUPPRIMER DEFINITIVEMENT UN UTILISATEUR
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(
             @PathVariable Long id) {

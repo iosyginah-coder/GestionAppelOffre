@@ -22,10 +22,12 @@ const MENU = [
   { id: "rapports", label: "Rapports", icon: ChartNoAxesCombined },
 ];
 
+// La référence est générée par le serveur : elle n'est jamais saisie.
 const EMPTY_FORM = {
   reference: "", objet: "", description: "", typeMarche: "FOURNITURE", montantEstime: "",
   lieuExecution: "", dateLimiteDepot: "", idCategorie: "",
 };
+
 const PIECE_VIDE = { nomPiece: "", description: "", obligatoire: true };
 
 const STATUS_COLORS = {
@@ -37,13 +39,30 @@ const STATUS_COLORS = {
 };
 
 const ACTIONS = {
-  publier: { label: "Publier", message: "Appel d'offres publié avec succès.", text: "Il deviendra visible par les soumissionnaires et ouvert aux dépôts d'offres." },
-  cloturer: { label: "Clôturer", message: "Appel d'offres clôturé avec succès.", text: "Les dépôts d'offres ne seront plus acceptés." },
-  annuler: { label: "Annuler", message: "Appel d'offres annulé avec succès.", text: "Cette action met fin à la procédure.", danger: true },
-  attribuer: { label: "Attribuer", message: "Appel d'offres attribué avec succès.", text: "Le marché sera marqué comme attribué." },
+  publier: {
+    label: "Publier",
+    message: "Appel d'offres publié avec succès.",
+    text: "Il sera visible par les soumissionnaires et publié automatiquement sur la page Facebook du SPAT.",
+  },
+  cloturer: {
+    label: "Clôturer",
+    message: "Appel d'offres clôturé avec succès.",
+    text: "Les dépôts d'offres ne seront plus acceptés.",
+  },
+  annuler: {
+    label: "Annuler",
+    message: "Appel d'offres annulé avec succès.",
+    text: "Cette action met fin à la procédure.",
+    danger: true,
+  },
+  attribuer: {
+    label: "Attribuer",
+    message: "Appel d'offres attribué avec succès.",
+    text: "Le marché sera marqué comme attribué.",
+  },
 };
 
-/* ---------- utilitaires ---------- */
+/* ---------- UTILITAIRES ---------- */
 
 function formatDate(value) {
   if (!value) return "—";
@@ -71,60 +90,79 @@ const getCategoryName = (c) => c?.nomCategorie || "Sans catégorie";
 
 function getStatusClass(status) {
   const classes = {
-    BROUILLON: "brouillon", PUBLIE: "publie", CLOTURE: "cloture",
-    ATTRIBUE: "attribue", ANNULE: "annule",
+    BROUILLON: "brouillon", PUBLIE: "publie", CLOTURE: "cloture", ATTRIBUE: "attribue", ANNULE: "annule",
   };
   return classes[(status || "").toUpperCase()] || "default";
 }
 
 function getStatusLabel(status) {
   const labels = {
-    BROUILLON: "Brouillon", PUBLIE: "Publié", CLOTURE: "Clôturé",
-    ATTRIBUE: "Attribué", ANNULE: "Annulé",
+    BROUILLON: "Brouillon", PUBLIE: "Publié", CLOTURE: "Clôturé", ATTRIBUE: "Attribué", ANNULE: "Annulé",
   };
   return labels[(status || "").toUpperCase()] || status || "Inconnu";
 }
 
 const getDateInputValue = (value) => (value ? String(value).slice(0, 16) : "");
+
 const estEnRetard = (a) =>
   a.statut === "PUBLIE" && a.dateLimiteDepot && new Date(a.dateLimiteDepot) < new Date();
 
 const sommePonderations = (liens) =>
   liens.reduce((sum, l) => sum + (Number(l.ponderation) || 0), 0);
 
-/* Vérifications avant publication (pièces + critères en plus des champs de base) */
+/*
+  Le backend renvoie les liens appel d'offres / critère à plat :
+  { idAppelOffreCritere, ponderation, idAppelOffre, idCritere, nomCritere, ... }
+*/
+const filtrerLiens = (liens, idAppel) =>
+  liens.filter((l) => Number(l.idAppelOffre) === Number(idAppel));
+
+/* ---------- VÉRIFICATIONS AVANT PUBLICATION ---------- */
+
 function analyserBrouillon(appel, comp) {
   const c = comp || {};
+
   const dateOk = Boolean(appel.dateLimiteDepot) && new Date(appel.dateLimiteDepot) > new Date();
   const categorieOk = Boolean(appel.categorieMarche);
   const montantOk = appel.typeMarche !== "FOURNITURE" || Number(appel.montantEstime) > 0;
 
   const piecesConnues = typeof c.pieces === "number";
   const piecesOk = piecesConnues && c.pieces > 0;
+
   const criteresConnus = typeof c.criteres === "number" && typeof c.total === "number";
   const criteresOk = criteresConnus && c.criteres > 0 && Math.abs(c.total - 100) < 0.01;
 
   const verifs = [
     [categorieOk, "Catégorie renseignée"],
-    [montantOk, appel.typeMarche === "FOURNITURE" ? "Montant estimé renseigné" : "Montant non requis (service)"],
+    [
+      montantOk,
+      appel.typeMarche === "FOURNITURE" ? "Montant estimé renseigné" : "Montant non requis (service)",
+    ],
     [dateOk, dateOk ? "Date limite dans le futur" : "Date limite dépassée : modifiez le dossier"],
     [
       piecesOk,
-      !piecesConnues ? "Pièces requises : vérification impossible"
-        : piecesOk ? `${c.pieces} pièce(s) requise(s)` : "Aucune pièce requise : modifiez le dossier",
+      !piecesConnues
+        ? "Pièces requises : vérification impossible"
+        : piecesOk
+          ? `${c.pieces} pièce(s) requise(s)`
+          : "Aucune pièce requise : modifiez le dossier",
     ],
     [
       criteresOk,
-      !criteresConnus ? "Critères d'évaluation : vérification impossible"
-        : c.criteres === 0 ? "Aucun critère d'évaluation : modifiez le dossier"
-          : criteresOk ? `${c.criteres} critère(s) — total 100 %`
+      !criteresConnus
+        ? "Critères d'évaluation : vérification impossible"
+        : c.criteres === 0
+          ? "Aucun critère d'évaluation : modifiez le dossier"
+          : criteresOk
+            ? `${c.criteres} critère(s) — total 100 %`
             : `Total des critères : ${c.total.toFixed(2)} % (100 % attendu)`,
     ],
   ];
+
   return { verifs, pret: verifs.every(([ok]) => ok) };
 }
 
-/* ---------- graphiques (SVG / CSS, sans librairie) ---------- */
+/* ---------- GRAPHIQUES ---------- */
 
 function DonutChart({ segments, total }) {
   const R = 72;
@@ -134,6 +172,7 @@ function DonutChart({ segments, total }) {
   return (
     <svg viewBox="0 0 200 200" className="rx-donut" role="img" aria-label="Répartition par statut">
       <circle cx="100" cy="100" r={R} fill="none" stroke="var(--rx-track)" strokeWidth="26" />
+
       {total > 0 &&
         segments.map((s) => {
           if (!s.value) return null;
@@ -141,8 +180,12 @@ function DonutChart({ segments, total }) {
           const el = (
             <circle
               key={s.key}
-              cx="100" cy="100" r={R} fill="none"
-              stroke={s.color} strokeWidth="26"
+              cx="100"
+              cy="100"
+              r={R}
+              fill="none"
+              stroke={s.color}
+              strokeWidth="26"
               strokeDasharray={`${Math.max(len - 2, 0)} ${C - Math.max(len - 2, 0)}`}
               strokeDashoffset={-cumul}
               transform="rotate(-90 100 100)"
@@ -153,6 +196,7 @@ function DonutChart({ segments, total }) {
           cumul += len;
           return el;
         })}
+
       <text x="100" y="98" textAnchor="middle" className="rx-donut-total">{total}</text>
       <text x="100" y="120" textAnchor="middle" className="rx-donut-sub">appels</text>
     </svg>
@@ -161,6 +205,7 @@ function DonutChart({ segments, total }) {
 
 function ColumnChart({ data }) {
   const max = Math.max(...data.map((d) => d.value), 1);
+
   return (
     <div className="rx-columns">
       {data.map((d) => (
@@ -181,7 +226,9 @@ function ColumnChart({ data }) {
 
 function BarList({ data, emptyText }) {
   const max = Math.max(...data.map((d) => d.value), 1);
+
   if (data.length === 0) return <p className="rx-muted">{emptyText}</p>;
+
   return (
     <div className="rx-barlist">
       {data.map((d) => (
@@ -191,7 +238,10 @@ function BarList({ data, emptyText }) {
             <strong>{d.value}</strong>
           </div>
           <div className="rx-bar-track">
-            <div className="rx-bar-fill" style={{ width: `${(d.value / max) * 100}%`, background: d.color || "#1768e5" }} />
+            <div
+              className="rx-bar-fill"
+              style={{ width: `${(d.value / max) * 100}%`, background: d.color || "#1768e5" }}
+            />
           </div>
         </div>
       ))}
@@ -199,7 +249,7 @@ function BarList({ data, emptyText }) {
   );
 }
 
-/* ---------- styles additionnels (tout est inclus ici) ---------- */
+/* ---------- CSS ADDITIONNEL ---------- */
 
 const EXTRA_CSS = `
 .resp-app{--rx-track:#e8edf5;--rx-card:#fff;--rx-line:#e3e9f3;--rx-text:#14213d;--rx-soft:#64748b;--rx-soft-bg:#f5f8fd}
@@ -263,7 +313,6 @@ const EXTRA_CSS = `
 .rx-modal-error{display:flex;align-items:flex-start;gap:8px;background:#fee2e2;color:#b91c1c;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:14px}
 .rx-modal-error svg{flex:none;margin-top:2px}
 .rx-field-hint{font-size:12px;color:var(--rx-soft);margin:0}
-
 .rx-builder-section{margin-top:22px;padding:18px;border:1px solid var(--rx-line);border-radius:14px;background:var(--rx-card)}
 .rx-builder-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:14px}
 .rx-builder-heading h3{margin:0 0 4px;display:flex;align-items:center;gap:8px;font-size:16px;color:var(--rx-text)}
@@ -287,8 +336,8 @@ const EXTRA_CSS = `
 .rx-weight-total{margin-top:14px;padding:10px 14px;border-radius:10px;font-size:14px;display:flex;justify-content:space-between;align-items:center;gap:10px}
 .rx-weight-total.ok{background:#d1fae5;color:#065f46}
 .rx-weight-total.ko{background:#fef3c7;color:#92400e}
+.rx-brand-image{width:48px;height:48px;object-fit:contain;display:block}
 @media(max-width:640px){.rx-criterion-item{grid-template-columns:1fr}.rx-criterion-item .rx-remove-item{width:100%}}
-
 .rx-detail-block{margin-top:18px}
 .rx-detail-block h4{margin:0 0 10px;font-size:15px;display:flex;align-items:center;gap:8px;color:var(--rx-text)}
 .rx-detail-list{list-style:none;margin:0;padding:0;display:grid;gap:8px}
@@ -296,9 +345,10 @@ const EXTRA_CSS = `
 .rx-detail-list small{display:block;color:var(--rx-soft);margin-top:2px}
 .rx-tag{flex:none;font-size:11.5px;font-weight:700;border-radius:99px;padding:2px 10px;background:#dbeafe;color:#1d4ed8}
 .rx-tag.opt{background:#e5e7eb;color:#4b5563}
+.rx-field-readonly{background:var(--rx-soft-bg)!important;color:var(--rx-soft)!important;cursor:not-allowed}
 `;
 
-/* ---------- page ---------- */
+/* ---------- PAGE RESPONSABLE ---------- */
 
 export default function ResponsablePage() {
   const router = useRouter();
@@ -306,7 +356,7 @@ export default function ResponsablePage() {
   const [user, setUser] = useState(null);
   const [appels, setAppels] = useState([]);
   const [categories, setCategories] = useState([]);
-  const [criteresDisponibles, setCriteresDisponibles] = useState([]); // grilles créées par l'administrateur
+  const [criteresDisponibles, setCriteresDisponibles] = useState([]);
   const [completude, setCompletude] = useState({});
 
   const [piecesForm, setPiecesForm] = useState([{ ...PIECE_VIDE }]);
@@ -324,9 +374,11 @@ export default function ResponsablePage() {
   const [theme, setTheme] = useState("light");
   const themeReady = useRef(false);
 
-  // Date courante lue après le montage (évite l'erreur new Date() pendant le rendu)
   const [maintenant, setMaintenant] = useState(null);
-  useEffect(() => { setMaintenant(new Date()); }, []);
+
+  useEffect(() => {
+    setMaintenant(new Date());
+  }, []);
 
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
@@ -336,6 +388,7 @@ export default function ResponsablePage() {
   const [detailOpen, setDetailOpen] = useState(false);
   const [selectedAppel, setSelectedAppel] = useState(null);
   const [detailData, setDetailData] = useState({ loading: false, pieces: [], criteres: [], error: "" });
+
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
@@ -350,21 +403,33 @@ export default function ResponsablePage() {
     const response = await fetch(`${API_URL}${path}`, {
       ...options,
       credentials: "include",
-      headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.headers || {}),
+      },
     });
 
     if (response.status === 401) {
       router.replace("/");
       throw new Error("Votre session a expiré. Veuillez vous reconnecter.");
     }
-    if (response.status === 403) {
-      throw new Error("Vous n'avez pas l'autorisation d'effectuer cette action.");
-    }
 
     const text = await response.text();
     let data = null;
+
     if (text) {
-      try { data = JSON.parse(text); } catch { data = text; }
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = text;
+      }
+    }
+
+    if (response.status === 403) {
+      throw new Error(
+        (data && typeof data === "object" && data.message) ||
+        "Vous n'avez pas l'autorisation d'effectuer cette action."
+      );
     }
 
     if (!response.ok) {
@@ -374,6 +439,7 @@ export default function ResponsablePage() {
           : data || "Une erreur est survenue."
       );
     }
+
     return data;
   }, [router]);
 
@@ -387,20 +453,20 @@ export default function ResponsablePage() {
     return Array.isArray(data) ? data : [];
   }, [apiFetch]);
 
-  const filtrerLiens = (liens, idAppel) =>
-    liens.filter((l) => Number(l.appelOffre?.idAppelOffre) === Number(idAppel));
-
   const chargerDonnees = useCallback(async (initial = false) => {
     if (initial) setLoading(true);
     else setRefreshing(true);
+
     setError("");
 
     try {
       const session = await apiFetch("/api/auth/session");
+
       if (session?.role !== "RESPONSABLE_MARCHES") {
         router.replace("/");
         return;
       }
+
       setUser(session);
 
       const [appelsData, categoriesData, criteresData] = await Promise.all([
@@ -411,30 +477,48 @@ export default function ResponsablePage() {
 
       const liste = Array.isArray(appelsData) ? appelsData : [];
       setAppels(liste);
+
       setCategories(
         (Array.isArray(categoriesData) ? categoriesData : []).filter(
           (c) => String(c.statut || "").toUpperCase() === "ACTIF"
         )
       );
+
       setCriteresDisponibles(Array.isArray(criteresData) ? criteresData : []);
 
       const brouillons = liste.filter((a) => a.statut === "BROUILLON");
       const comp = {};
+
       if (brouillons.length) {
         let tousLiens = null;
-        try { tousLiens = await chargerTousLesLiens(); } catch { tousLiens = null; }
 
-        await Promise.all(brouillons.map(async (a) => {
-          let nbPieces = null;
-          try { nbPieces = (await chargerPieces(a.idAppelOffre)).length; } catch { nbPieces = null; }
-          const liens = tousLiens ? filtrerLiens(tousLiens, a.idAppelOffre) : null;
-          comp[a.idAppelOffre] = {
-            pieces: nbPieces,
-            criteres: liens ? liens.length : null,
-            total: liens ? sommePonderations(liens) : null,
-          };
-        }));
+        try {
+          tousLiens = await chargerTousLesLiens();
+        } catch {
+          tousLiens = null;
+        }
+
+        await Promise.all(
+          brouillons.map(async (a) => {
+            let nbPieces = null;
+
+            try {
+              nbPieces = (await chargerPieces(a.idAppelOffre)).length;
+            } catch {
+              nbPieces = null;
+            }
+
+            const liens = tousLiens ? filtrerLiens(tousLiens, a.idAppelOffre) : null;
+
+            comp[a.idAppelOffre] = {
+              pieces: nbPieces,
+              criteres: liens ? liens.length : null,
+              total: liens ? sommePonderations(liens) : null,
+            };
+          })
+        );
       }
+
       setCompletude(comp);
     } catch (err) {
       console.error(err);
@@ -445,22 +529,29 @@ export default function ResponsablePage() {
     }
   }, [apiFetch, router, chargerPieces, chargerTousLesLiens]);
 
-  useEffect(() => { chargerDonnees(true); }, [chargerDonnees]);
+  useEffect(() => {
+    chargerDonnees(true);
+  }, [chargerDonnees]);
 
-  /* ----- thème ----- */
+  /* ----- THÈME ----- */
 
   useEffect(() => {
     try {
       const saved = localStorage.getItem("spat-responsable-theme");
       if (saved === "dark" || saved === "light") setTheme(saved);
     } catch {}
+
     themeReady.current = true;
   }, []);
 
   useEffect(() => {
     if (!themeReady.current) return;
+
     document.documentElement.setAttribute("data-responsable-theme", theme);
-    try { localStorage.setItem("spat-responsable-theme", theme); } catch {}
+
+    try {
+      localStorage.setItem("spat-responsable-theme", theme);
+    } catch {}
   }, [theme]);
 
   useEffect(() => {
@@ -469,17 +560,21 @@ export default function ResponsablePage() {
     return () => clearTimeout(t);
   }, [successMessage]);
 
-  /* ----- données calculées ----- */
+  /* ----- DONNÉES CALCULÉES ----- */
 
   const notifications = useMemo(
-    () => appels.filter(estEnRetard).map((a) => ({
-      id: a.idAppelOffre, title: "Date limite dépassée", message: a.objet,
-    })),
+    () =>
+      appels.filter(estEnRetard).map((a) => ({
+        id: a.idAppelOffre,
+        title: "Date limite dépassée",
+        message: a.objet,
+      })),
     [appels]
   );
 
   const stats = useMemo(() => {
     const count = (s) => appels.filter((a) => String(a.statut || "").toUpperCase() === s).length;
+
     return {
       total: appels.length,
       brouillons: count("BROUILLON"),
@@ -501,32 +596,42 @@ export default function ResponsablePage() {
 
   const parMois = useMemo(() => {
     if (!maintenant) return [];
+
     const mois = [];
+
     for (let i = 5; i >= 0; i--) {
       const date = new Date(maintenant.getFullYear(), maintenant.getMonth() - i, 1);
+
       mois.push({
         key: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`,
         label: date.toLocaleDateString("fr-FR", { month: "short" }),
         value: 0,
       });
     }
+
     appels.forEach((a) => {
       if (!a.dateLimiteDepot) return;
+
       const date = new Date(a.dateLimiteDepot);
       if (Number.isNaN(date.getTime())) return;
+
       const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
       const trouve = mois.find((m) => m.key === key);
+
       if (trouve) trouve.value += 1;
     });
+
     return mois;
   }, [appels, maintenant]);
 
   const parCategorie = useMemo(() => {
     const map = {};
+
     appels.forEach((a) => {
       const n = getCategoryName(a.categorieMarche);
       map[n] = (map[n] || 0) + 1;
     });
+
     return Object.entries(map)
       .map(([label, value]) => ({ label, value, color: "#1768e5" }))
       .sort((a, b) => b.value - a.value)
@@ -538,14 +643,19 @@ export default function ResponsablePage() {
     { label: "Services", value: appels.filter((a) => a.typeMarche === "SERVICE").length, color: "#8b5cf6" },
   ], [appels]);
 
-  const filteredAppels = useMemo(() => appels.filter((a) => {
-    const texte = [a.reference, a.objet, a.description, a.lieuExecution].join(" ").toLowerCase();
-    return (
-      (!search || texte.includes(search.toLowerCase())) &&
-      (!filterStatus || a.statut === filterStatus) &&
-      (!filterType || a.typeMarche === filterType)
-    );
-  }), [appels, search, filterStatus, filterType]);
+  const filteredAppels = useMemo(
+    () =>
+      appels.filter((a) => {
+        const texte = [a.reference, a.objet, a.description, a.lieuExecution].join(" ").toLowerCase();
+
+        return (
+          (!search || texte.includes(search.toLowerCase())) &&
+          (!filterStatus || a.statut === filterStatus) &&
+          (!filterType || a.typeMarche === filterType)
+        );
+      }),
+    [appels, search, filterStatus, filterType]
+  );
 
   const derniersAppels = useMemo(
     () => [...appels].sort((a, b) => b.idAppelOffre - a.idAppelOffre).slice(0, 5),
@@ -556,11 +666,11 @@ export default function ResponsablePage() {
   const dejaPublies = useMemo(() => appels.filter((a) => a.statut === "PUBLIE"), [appels]);
 
   const nomCritereDuLien = (lien) =>
-    lien.critere?.nomCritere ||
-    criteresDisponibles.find((c) => Number(c.idCritere) === Number(lien.critere?.idCritere))?.nomCritere ||
+    lien.nomCritere ||
+    criteresDisponibles.find((c) => Number(c.idCritere) === Number(lien.idCritere))?.nomCritere ||
     "Critère";
 
-  /* ----- formulaire ----- */
+  /* ----- FORMULAIRE ----- */
 
   const modifierChamp = (e) => {
     const { name, value } = e.target;
@@ -579,6 +689,7 @@ export default function ResponsablePage() {
 
   const ouvrirModification = async (appel) => {
     setEditingId(appel.idAppelOffre);
+
     setForm({
       reference: appel.reference || "",
       objet: appel.objet || "",
@@ -589,6 +700,7 @@ export default function ResponsablePage() {
       dateLimiteDepot: getDateInputValue(appel.dateLimiteDepot),
       idCategorie: String(getCategoryId(appel.categorieMarche) || ""),
     });
+
     setPiecesForm([{ ...PIECE_VIDE }]);
     setCriteresForm([]);
     setModalError("");
@@ -600,46 +712,74 @@ export default function ResponsablePage() {
         chargerPieces(appel.idAppelOffre),
         chargerTousLesLiens(),
       ]);
+
       setPiecesForm(
         pieces.length
           ? pieces.map((p) => ({
-              idPiece: p.idPiece, nomPiece: p.nomPiece || "",
-              description: p.description || "", obligatoire: p.obligatoire !== false,
+              idPiece: p.idPiece,
+              nomPiece: p.nomPiece || "",
+              description: p.description || "",
+              obligatoire: p.obligatoire !== false,
             }))
           : [{ ...PIECE_VIDE }]
       );
+
       setCriteresForm(
         filtrerLiens(tousLiens, appel.idAppelOffre).map((l) => ({
-          idCritere: String(l.critere?.idCritere || ""),
+          idCritere: String(l.idCritere || ""),
           ponderation: l.ponderation ?? "",
         }))
       );
+
       setEditReady(true);
     } catch (err) {
       setModalError(
-        "Impossible de charger les pièces et critères existants (" + err.message +
+        "Impossible de charger les pièces et critères existants (" +
+        err.message +
         "). Fermez la fenêtre puis réessayez : l'enregistrement est bloqué pour éviter de perdre des données."
       );
     }
   };
 
-  const ajouterPieceForm = () => setPiecesForm((p) => [...p, { ...PIECE_VIDE }]);
-  const modifierPieceForm = (index, champ, valeur) =>
-    setPiecesForm((p) => p.map((piece, i) => (i === index ? { ...piece, [champ]: valeur } : piece)));
-  const supprimerPieceForm = (index) =>
-    setPiecesForm((p) => (p.length === 1 ? [{ ...PIECE_VIDE }] : p.filter((_, i) => i !== index)));
+  const ajouterPieceForm = () => {
+    setPiecesForm((p) => [...p, { ...PIECE_VIDE }]);
+  };
 
-  const ajouterCritereForm = () => setCriteresForm((p) => [...p, { idCritere: "", ponderation: "" }]);
-  const supprimerCritereForm = (index) => setCriteresForm((p) => p.filter((_, i) => i !== index));
-  const modifierPonderationForm = (index, valeur) =>
+  const modifierPieceForm = (index, champ, valeur) => {
+    setPiecesForm((p) => p.map((piece, i) => (i === index ? { ...piece, [champ]: valeur } : piece)));
+  };
+
+  const supprimerPieceForm = (index) => {
+    setPiecesForm((p) => (p.length === 1 ? [{ ...PIECE_VIDE }] : p.filter((_, i) => i !== index)));
+  };
+
+  const ajouterCritereForm = () => {
+    setCriteresForm((p) => [...p, { idCritere: "", ponderation: "" }]);
+  };
+
+  const supprimerCritereForm = (index) => {
+    setCriteresForm((p) => p.filter((_, i) => i !== index));
+  };
+
+  const modifierPonderationForm = (index, valeur) => {
     setCriteresForm((p) => p.map((c, i) => (i === index ? { ...c, ponderation: valeur } : c)));
+  };
+
   const choisirCritereForm = (index, idCritere) => {
     const ref = criteresDisponibles.find((c) => String(c.idCritere) === String(idCritere));
-    setCriteresForm((p) => p.map((c, i) => (
-      i === index
-        ? { ...c, idCritere, ponderation: c.ponderation === "" && ref?.ponderation != null ? ref.ponderation : c.ponderation }
-        : c
-    )));
+
+    setCriteresForm((p) =>
+      p.map((c, i) =>
+        i === index
+          ? {
+              ...c,
+              idCritere,
+              ponderation:
+                c.ponderation === "" && ref?.ponderation != null ? ref.ponderation : c.ponderation,
+            }
+          : c
+      )
+    );
   };
 
   const totalPonderations = useMemo(
@@ -649,6 +789,7 @@ export default function ResponsablePage() {
 
   const fermerModal = () => {
     if (saving) return;
+
     setModalOpen(false);
     setEditingId(null);
     setForm(EMPTY_FORM);
@@ -660,34 +801,53 @@ export default function ResponsablePage() {
 
   const enregistrerAppel = async (event) => {
     event.preventDefault();
+
     if (!editReady) return;
 
-    if (!form.reference.trim()) return setModalError("Veuillez saisir la référence de l'appel d'offres.");
-    if (form.reference.trim().length > 50) return setModalError("La référence ne doit pas dépasser 50 caractères.");
-    if (!form.objet.trim()) return setModalError("Veuillez renseigner l'objet de l'appel d'offres.");
-    if (!form.idCategorie) return setModalError("Veuillez sélectionner une catégorie.");
-    if (!form.dateLimiteDepot) return setModalError("Veuillez renseigner la date limite de dépôt.");
+    if (!form.objet.trim()) {
+      return setModalError("Veuillez renseigner l'objet de l'appel d'offres.");
+    }
+
+    if (!form.idCategorie) {
+      return setModalError("Veuillez sélectionner une catégorie.");
+    }
+
+    if (!form.dateLimiteDepot) {
+      return setModalError("Veuillez renseigner la date limite de dépôt.");
+    }
+
     if (new Date(form.dateLimiteDepot) <= new Date()) {
       return setModalError("La date limite de dépôt doit être dans le futur.");
     }
+
     if (form.typeMarche === "FOURNITURE" && (!form.montantEstime || Number(form.montantEstime) <= 0)) {
       return setModalError("Le montant estimé est obligatoire pour une fourniture.");
     }
 
     const piecesValides = piecesForm.filter((p) => p.nomPiece.trim());
+
     if (piecesForm.length > 1 && piecesForm.some((p) => !p.nomPiece.trim())) {
       return setModalError("Veuillez compléter ou supprimer chaque pièce requise vide.");
     }
 
     if (criteresForm.some((c) => !c.idCritere)) {
-      return setModalError("Veuillez sélectionner un critère pour chaque ligne ou supprimer la ligne vide.");
+      return setModalError(
+        "Veuillez sélectionner un critère pour chaque ligne ou supprimer la ligne vide."
+      );
     }
-    if (criteresForm.some((c) => !c.ponderation || Number(c.ponderation) <= 0 || Number(c.ponderation) > 100)) {
+
+    if (
+      criteresForm.some(
+        (c) => !c.ponderation || Number(c.ponderation) <= 0 || Number(c.ponderation) > 100
+      )
+    ) {
       return setModalError("Chaque critère doit avoir une pondération comprise entre 0 et 100.");
     }
+
     if (new Set(criteresForm.map((c) => c.idCritere)).size !== criteresForm.length) {
       return setModalError("Un même critère ne peut pas être ajouté deux fois.");
     }
+
     if (criteresForm.length && Math.abs(totalPonderations - 100) > 0.01) {
       return setModalError("La somme des pondérations des critères doit être égale à 100 %.");
     }
@@ -695,40 +855,55 @@ export default function ResponsablePage() {
     setSaving(true);
     setModalError("");
 
+    // La référence est générée par le serveur : elle n'est pas envoyée.
     const payload = {
-      reference: form.reference.trim(), // saisie par le responsable, unique
       objet: form.objet.trim(),
       description: form.description.trim(),
       typeMarche: form.typeMarche,
       montantEstime: form.typeMarche === "FOURNITURE" ? Number(form.montantEstime) : null,
       lieuExecution: form.lieuExecution.trim(),
-      dateLimiteDepot: form.dateLimiteDepot.length === 16 ? form.dateLimiteDepot + ":00" : form.dateLimiteDepot,
+      dateLimiteDepot:
+        form.dateLimiteDepot.length === 16 ? form.dateLimiteDepot + ":00" : form.dateLimiteDepot,
       categorieMarche: { idCategorie: Number(form.idCategorie) },
     };
 
     let idAppel = editingId;
     let creation = false;
+    let reference = form.reference;
 
     try {
       if (editingId) {
-        await apiFetch(`/api/appel-offres/${editingId}`, { method: "PUT", body: JSON.stringify(payload) });
+        await apiFetch(`/api/appel-offres/${editingId}`, {
+          method: "PUT",
+          body: JSON.stringify(payload),
+        });
       } else {
-        const cree = await apiFetch("/api/appel-offres", { method: "POST", body: JSON.stringify(payload) });
+        const cree = await apiFetch("/api/appel-offres", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+
         idAppel = cree?.idAppelOffre;
+        reference = cree?.reference || "";
         creation = true;
       }
-      if (!idAppel) throw new Error("Le serveur n'a pas retourné l'identifiant de l'appel d'offres.");
 
-      if (editingId || creation) {
-        const [anciennesPieces, tousLiens] = await Promise.all([
-          chargerPieces(idAppel), chargerTousLesLiens(),
-        ]);
-        for (const p of anciennesPieces) {
-          await apiFetch(`/api/pieces-requises/${p.idPiece}`, { method: "DELETE" });
-        }
-        for (const l of filtrerLiens(tousLiens, idAppel)) {
-          await apiFetch(`/api/appel-offre-criteres/${l.idAppelOffreCritere}`, { method: "DELETE" });
-        }
+      if (!idAppel) {
+        throw new Error("Le serveur n'a pas retourné l'identifiant de l'appel d'offres.");
+      }
+
+      // Remplacer les pièces et critères existants par ceux du formulaire
+      const [anciennesPieces, tousLiens] = await Promise.all([
+        chargerPieces(idAppel),
+        chargerTousLesLiens(),
+      ]);
+
+      for (const p of anciennesPieces) {
+        await apiFetch(`/api/pieces-requises/${p.idPiece}`, { method: "DELETE" });
+      }
+
+      for (const l of filtrerLiens(tousLiens, idAppel)) {
+        await apiFetch(`/api/appel-offre-criteres/${l.idAppelOffreCritere}`, { method: "DELETE" });
       }
 
       for (const piece of piecesValides) {
@@ -742,13 +917,14 @@ export default function ResponsablePage() {
         });
       }
 
+      // Le backend attend un corps à plat : { idAppelOffre, idCritere, ponderation }
       for (const critere of criteresForm) {
         await apiFetch("/api/appel-offre-criteres", {
           method: "POST",
           body: JSON.stringify({
+            idAppelOffre: Number(idAppel),
+            idCritere: Number(critere.idCritere),
             ponderation: Number(critere.ponderation),
-            appelOffre: { idAppelOffre: Number(idAppel) },
-            critere: { idCritere: Number(critere.idCritere) },
           }),
         });
       }
@@ -756,22 +932,25 @@ export default function ResponsablePage() {
       setSuccessMessage(
         editingId
           ? "Appel d'offres, pièces et critères modifiés avec succès."
-          : `Appel d'offres ${payload.reference} créé avec ses pièces et critères (statut Brouillon).`
+          : `Appel d'offres ${reference} créé avec ses pièces et critères (statut Brouillon).`
       );
+
       setModalOpen(false);
       setForm(EMPTY_FORM);
       setPiecesForm([{ ...PIECE_VIDE }]);
       setCriteresForm([]);
       setEditingId(null);
+
       await chargerDonnees(false);
     } catch (err) {
-      // Appel créé mais pièces/critères en échec : on passe en modification pour réessayer sans doublon
       if (idAppel && creation) {
         setEditingId(idAppel);
+        setForm((p) => ({ ...p, reference }));
+
         setModalError(
-          `L'appel d'offres ${payload.reference} a été créé en brouillon, mais l'enregistrement des pièces/critères a échoué : ` +
-          `${err.message}. Cliquez de nouveau sur « Enregistrer » pour réessayer.`
+          `L'appel d'offres ${reference} a été créé en brouillon, mais l'enregistrement des pièces/critères a échoué : ${err.message}. Cliquez de nouveau sur « Enregistrer » pour réessayer.`
         );
+
         chargerDonnees(false);
       } else {
         setModalError(err.message || "Une erreur est survenue pendant l'enregistrement.");
@@ -781,39 +960,62 @@ export default function ResponsablePage() {
     }
   };
 
-  /* ----- actions ----- */
+  /* ----- ACTIONS ----- */
 
-  const demanderConfirmation = (config) => setConfirmState(config);
+  const demanderConfirmation = (config) => {
+    setConfirmState(config);
+  };
 
   const controlerPublication = async (appel) => {
     if (!appel.dateLimiteDepot || new Date(appel.dateLimiteDepot) <= new Date()) {
       return "La date limite de dépôt est dépassée : modifiez le dossier avant de publier.";
     }
-    if (!appel.categorieMarche) return "La catégorie du marché est obligatoire.";
+
+    if (!appel.categorieMarche) {
+      return "La catégorie du marché est obligatoire.";
+    }
+
     if (appel.typeMarche === "FOURNITURE" && !(Number(appel.montantEstime) > 0)) {
       return "Le montant estimé est obligatoire pour une fourniture.";
     }
+
     const pieces = await chargerPieces(appel.idAppelOffre);
-    if (!pieces.length) return "Ajoutez au moins une pièce requise avant de publier (bouton Modifier).";
+
+    if (!pieces.length) {
+      return "Ajoutez au moins une pièce requise avant de publier (bouton Modifier).";
+    }
+
     const liens = filtrerLiens(await chargerTousLesLiens(), appel.idAppelOffre);
-    if (!liens.length) return "Ajoutez au moins un critère d'évaluation avant de publier (bouton Modifier).";
+
+    if (!liens.length) {
+      return "Ajoutez au moins un critère d'évaluation avant de publier (bouton Modifier).";
+    }
+
     const total = sommePonderations(liens);
+
     if (Math.abs(total - 100) > 0.01) {
       return `La somme des pondérations des critères est de ${total.toFixed(2)} % : elle doit être égale à 100 %.`;
     }
+
     return "";
   };
 
   const executerAction = async (appel, action) => {
     const cfg = ACTIONS[action];
+
     if (!cfg) return;
 
     if (action === "publier") {
       setError("");
       setBusyId(appel.idAppelOffre);
+
       try {
         const probleme = await controlerPublication(appel);
-        if (probleme) { setError(probleme); return; }
+
+        if (probleme) {
+          setError(probleme);
+          return;
+        }
       } catch (err) {
         setError("Vérification impossible : " + err.message);
         return;
@@ -827,13 +1029,37 @@ export default function ResponsablePage() {
       message: `« ${appel.objet} ». ${cfg.text}`,
       confirmLabel: cfg.label,
       danger: cfg.danger,
+
       onConfirm: async () => {
         setError("");
         setBusyId(appel.idAppelOffre);
+
         try {
-          await apiFetch(`/api/appel-offres/${appel.idAppelOffre}/${action}`, { method: "PATCH" });
-          setSuccessMessage(cfg.message);
+          const resultat = await apiFetch(
+            `/api/appel-offres/${appel.idAppelOffre}/${action}`,
+            { method: "PATCH" }
+          );
+
+          // Recharger d'abord : chargerDonnees() efface le message d'erreur.
           await chargerDonnees(false);
+
+          if (action === "publier") {
+            // Le backend publie automatiquement sur Facebook et renvoie le résultat.
+            const fb = resultat?.facebook;
+
+            if (fb?.success) {
+              setSuccessMessage("Appel d'offres publié et diffusé sur Facebook.");
+            } else {
+              setSuccessMessage("Appel d'offres publié dans SPAT.");
+              setError(
+                "Publication Facebook non effectuée : " +
+                (fb?.message || "réponse inattendue du serveur.") +
+                " Utilisez le bouton « Facebook » de la carte pour réessayer."
+              );
+            }
+          } else {
+            setSuccessMessage(cfg.message);
+          }
         } catch (err) {
           setError(err.message);
         } finally {
@@ -848,27 +1074,62 @@ export default function ResponsablePage() {
       setError("Seuls les brouillons peuvent être supprimés.");
       return;
     }
+
     demanderConfirmation({
       title: "Supprimer ce brouillon ?",
       message: `« ${appel.objet} » sera supprimé définitivement avec ses pièces requises et ses critères.`,
       confirmLabel: "Supprimer",
       danger: true,
+
       onConfirm: async () => {
         setError("");
         setBusyId(appel.idAppelOffre);
+
         try {
           const [pieces, tousLiens] = await Promise.all([
-            chargerPieces(appel.idAppelOffre), chargerTousLesLiens(),
+            chargerPieces(appel.idAppelOffre),
+            chargerTousLesLiens(),
           ]);
+
           for (const p of pieces) {
             await apiFetch(`/api/pieces-requises/${p.idPiece}`, { method: "DELETE" });
           }
+
           for (const l of filtrerLiens(tousLiens, appel.idAppelOffre)) {
             await apiFetch(`/api/appel-offre-criteres/${l.idAppelOffreCritere}`, { method: "DELETE" });
           }
+
           await apiFetch(`/api/appel-offres/${appel.idAppelOffre}`, { method: "DELETE" });
-          setSuccessMessage("Appel d'offres supprimé avec succès.");
+
           await chargerDonnees(false);
+          setSuccessMessage("Appel d'offres supprimé avec succès.");
+        } catch (err) {
+          setError(err.message);
+        } finally {
+          setBusyId(null);
+        }
+      },
+    });
+  };
+
+  // Re-publier (ou réessayer) un appel déjà publié sur la page Facebook
+  const republierFacebook = (appel) => {
+    demanderConfirmation({
+      title: "Publier sur Facebook ?",
+      message: `« ${appel.objet} » sera publié sur la page Facebook du SPAT (un nouveau post sera créé).`,
+      confirmLabel: "Publier sur Facebook",
+
+      onConfirm: async () => {
+        setError("");
+        setBusyId(appel.idAppelOffre);
+
+        try {
+          await apiFetch("/api/social/facebook/publish", {
+            method: "POST",
+            body: JSON.stringify({ idAppelOffre: appel.idAppelOffre }),
+          });
+
+          setSuccessMessage("Publication Facebook effectuée avec succès.");
         } catch (err) {
           setError(err.message);
         } finally {
@@ -882,13 +1143,18 @@ export default function ResponsablePage() {
     setSelectedAppel(appel);
     setDetailOpen(true);
     setDetailData({ loading: true, pieces: [], criteres: [], error: "" });
+
     try {
       const [pieces, tousLiens] = await Promise.all([
-        chargerPieces(appel.idAppelOffre), chargerTousLesLiens(),
+        chargerPieces(appel.idAppelOffre),
+        chargerTousLesLiens(),
       ]);
+
       setDetailData({
-        loading: false, pieces,
-        criteres: filtrerLiens(tousLiens, appel.idAppelOffre), error: "",
+        loading: false,
+        pieces,
+        criteres: filtrerLiens(tousLiens, appel.idAppelOffre),
+        error: "",
       });
     } catch (err) {
       setDetailData({ loading: false, pieces: [], criteres: [], error: err.message });
@@ -896,33 +1162,45 @@ export default function ResponsablePage() {
   };
 
   const deconnexion = async () => {
-    try { await apiFetch("/api/auth/logout", { method: "POST" }); }
-    catch (err) { console.error(err); }
-    finally { router.replace("/"); }
+    try {
+      await apiFetch("/api/auth/logout", { method: "POST" });
+    } catch (err) {
+      console.error(err);
+    } finally {
+      router.replace("/");
+    }
   };
 
   const exporterCSV = () => {
     const lignes = [
       ["Référence", "Objet", "Type", "Catégorie", "Statut", "Date limite", "Lieu"],
       ...filteredAppels.map((a) => [
-        a.reference || "", a.objet || "", a.typeMarche || "",
-        getCategoryName(a.categorieMarche), getStatusLabel(a.statut),
-        formatDate(a.dateLimiteDepot), a.lieuExecution || "",
+        a.reference || "",
+        a.objet || "",
+        a.typeMarche || "",
+        getCategoryName(a.categorieMarche),
+        getStatusLabel(a.statut),
+        formatDate(a.dateLimiteDepot),
+        a.lieuExecution || "",
       ]),
     ];
+
     const csv = lignes
       .map((l) => l.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(";"))
       .join("\n");
+
     const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
+
     link.href = url;
     link.download = "appels-offres-spat.csv";
     link.click();
+
     URL.revokeObjectURL(url);
   };
 
-  /* ----- rendu ----- */
+  /* ----- RENDU ----- */
 
   if (loading) {
     return (
@@ -946,9 +1224,11 @@ export default function ResponsablePage() {
           <button className="resp-action edit" title="Modifier" onClick={() => ouvrirModification(appel)}>
             <Pencil size={16} />
           </button>
+
           <button className="resp-action publish" title="Publier" onClick={() => executerAction(appel, "publier")}>
             <Send size={16} />
           </button>
+
           <button className="resp-action delete" title="Supprimer" onClick={() => supprimerAppel(appel)}>
             <Trash2 size={16} />
           </button>
@@ -960,6 +1240,7 @@ export default function ResponsablePage() {
           <button className="resp-action close" title="Clôturer" onClick={() => executerAction(appel, "cloturer")}>
             <CheckCircle2 size={16} />
           </button>
+
           <button className="resp-action cancel" title="Annuler" onClick={() => executerAction(appel, "annuler")}>
             <Ban size={16} />
           </button>
@@ -979,13 +1260,18 @@ export default function ResponsablePage() {
       <style>{EXTRA_CSS}</style>
 
       {/* SIDEBAR */}
+
       <aside className={`resp-sidebar ${sidebarOpen ? "open" : ""}`}>
         <div className="resp-brand">
-          <div className="resp-brand-logo"><Building2 size={29} /></div>
+          <div className="resp-brand-logo">
+            <img src="/spat.png" alt="Logo SPAT" className="rx-brand-image" />
+          </div>
+
           <div>
             <h2>SPAT</h2>
             <span>Port de Toamasina</span>
           </div>
+
           <button className="resp-close-sidebar" onClick={() => setSidebarOpen(false)}>
             <X size={21} />
           </button>
@@ -993,10 +1279,12 @@ export default function ResponsablePage() {
 
         <div className="resp-profile-mini">
           <div className="resp-avatar">{(user?.nomComplet || "R").charAt(0).toUpperCase()}</div>
+
           <div className="resp-profile-info">
             <strong>{user?.nomComplet || "Responsable"}</strong>
             <span>Responsable des marchés</span>
           </div>
+
           <span className="resp-online"></span>
         </div>
 
@@ -1005,17 +1293,23 @@ export default function ResponsablePage() {
         <nav className="resp-navigation">
           {MENU.map((item) => {
             const Icon = item.icon;
+
             return (
               <button
                 key={item.id}
                 className={`resp-nav-item ${activeMenu === item.id ? "active" : ""}`}
-                onClick={() => { setActiveMenu(item.id); setSidebarOpen(false); }}
+                onClick={() => {
+                  setActiveMenu(item.id);
+                  setSidebarOpen(false);
+                }}
               >
                 <Icon size={19} />
                 <span>{item.label}</span>
+
                 {item.id === "publication" && aPublier.length > 0 && (
                   <span className="rx-badge-count">{aPublier.length}</span>
                 )}
+
                 {activeMenu === item.id && <ChevronRight size={17} className="resp-nav-arrow" />}
               </button>
             );
@@ -1024,10 +1318,14 @@ export default function ResponsablePage() {
 
         <div className="resp-sidebar-bottom">
           <div className="resp-sidebar-help">
-            <div className="resp-help-icon"><CircleHelp size={22} /></div>
+            <div className="resp-help-icon">
+              <CircleHelp size={22} />
+            </div>
+
             <strong>Besoin d'aide ?</strong>
             <p>Contactez votre administrateur SPAT pour toute assistance.</p>
           </div>
+
           <button className="resp-logout" onClick={deconnexion}>
             <LogOut size={19} />
             <span>Déconnexion</span>
@@ -1038,16 +1336,19 @@ export default function ResponsablePage() {
       {sidebarOpen && <div className="resp-overlay" onClick={() => setSidebarOpen(false)} />}
 
       {/* CONTENU */}
+
       <main className="resp-main">
         <header className="resp-header">
           <div className="resp-header-left">
             <button className="resp-mobile-menu" onClick={() => setSidebarOpen(true)}>
               <Menu size={23} />
             </button>
+
             <div>
               <span className="resp-breadcrumb">
                 SPAT <ChevronRight size={13} /> Responsable
               </span>
+
               <h1>{MENU.find((m) => m.id === activeMenu)?.label}</h1>
             </div>
           </div>
@@ -1055,6 +1356,7 @@ export default function ResponsablePage() {
           <div className="resp-header-right">
             <div className="resp-header-date">
               <CalendarDays size={16} />
+
               {maintenant
                 ? maintenant.toLocaleDateString("fr-FR", {
                     weekday: "long", day: "numeric", month: "long", year: "numeric",
@@ -1076,6 +1378,7 @@ export default function ResponsablePage() {
                 onClick={() => setNotificationOpen(!notificationOpen)}
               >
                 <Bell size={20} />
+
                 {notifications.length > 0 && (
                   <span className="resp-notification-count">{notifications.length}</span>
                 )}
@@ -1085,14 +1388,19 @@ export default function ResponsablePage() {
                 <div className="resp-notification-panel">
                   <div className="resp-notification-head">
                     <strong>Notifications</strong>
-                    <button onClick={() => setNotificationOpen(false)}><X size={17} /></button>
+
+                    <button onClick={() => setNotificationOpen(false)}>
+                      <X size={17} />
+                    </button>
                   </div>
+
                   {notifications.length === 0 ? (
                     <p className="resp-empty-notification">Aucune nouvelle notification.</p>
                   ) : (
                     notifications.map((n) => (
                       <div key={n.id} className="resp-notification-item">
                         <AlertTriangle size={18} />
+
                         <div>
                           <strong>{n.title}</strong>
                           <span>{n.message}</span>
@@ -1108,10 +1416,12 @@ export default function ResponsablePage() {
               <div className="resp-avatar resp-avatar-small">
                 {(user?.nomComplet || "R").charAt(0).toUpperCase()}
               </div>
+
               <div>
                 <strong>{user?.nomComplet || "Responsable"}</strong>
                 <span>Responsable des marchés</span>
               </div>
+
               <ChevronDown size={16} />
             </div>
           </div>
@@ -1121,40 +1431,60 @@ export default function ResponsablePage() {
           <div className="resp-alert resp-alert-error">
             <AlertTriangle size={18} />
             <span>{error}</span>
-            <button onClick={() => setError("")}><X size={17} /></button>
+
+            <button onClick={() => setError("")}>
+              <X size={17} />
+            </button>
           </div>
         )}
+
         {successMessage && (
           <div className="resp-alert resp-alert-success">
             <CheckCircle2 size={18} />
             <span>{successMessage}</span>
-            <button onClick={() => setSuccessMessage("")}><X size={17} /></button>
+
+            <button onClick={() => setSuccessMessage("")}>
+              <X size={17} />
+            </button>
           </div>
         )}
 
-        {/* ================= DASHBOARD ================= */}
+        {/* DASHBOARD */}
+
         {activeMenu === "dashboard" && (
           <section className="resp-content">
             <div className="resp-hero">
               <div className="resp-hero-content">
-                <span className="resp-hero-label"><span></span> ESPACE PROFESSIONNEL SPAT</span>
+                <span className="resp-hero-label">
+                  <span></span> ESPACE PROFESSIONNEL SPAT
+                </span>
+
                 <h2>Bonjour, {premierNom} !</h2>
+
                 <p>
                   {aPublier.length > 0
                     ? `${aPublier.length} brouillon(s) attendent d'être publiés.`
                     : "Pilotez vos appels d'offres et assurez le suivi des marchés."}
                 </p>
+
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                   <button className="resp-primary-button resp-hero-button" onClick={ouvrirCreation}>
-                    <Plus size={19} /> Nouvel appel d'offres
+                    <Plus size={19} />
+                    Nouvel appel d'offres
                   </button>
+
                   {aPublier.length > 0 && (
-                    <button className="resp-primary-button resp-hero-button" onClick={() => setActiveMenu("publication")}>
-                      <Megaphone size={19} /> Aller à la publication
+                    <button
+                      className="resp-primary-button resp-hero-button"
+                      onClick={() => setActiveMenu("publication")}
+                    >
+                      <Megaphone size={19} />
+                      Aller à la publication
                     </button>
                   )}
                 </div>
               </div>
+
               <div className="resp-hero-decoration">
                 <div className="resp-hero-circle"></div>
                 <Building2 size={110} strokeWidth={1} />
@@ -1166,6 +1496,7 @@ export default function ResponsablePage() {
                 <h2>Vue générale</h2>
                 <p>Indicateurs de votre activité</p>
               </div>
+
               <button className="resp-refresh-button" onClick={() => chargerDonnees(false)} disabled={refreshing}>
                 <RefreshCw size={16} className={refreshing ? "resp-spin" : ""} />
                 Actualiser
@@ -1182,9 +1513,13 @@ export default function ResponsablePage() {
               ].map(({ c, icon: Icon, v, l, f, t }) => (
                 <div className={`resp-stat-card ${c}`} key={l}>
                   <div className="resp-stat-top">
-                    <div className="resp-stat-icon"><Icon size={23} /></div>
+                    <div className="resp-stat-icon">
+                      <Icon size={23} />
+                    </div>
+
                     <span className="resp-stat-trend">{t}</span>
                   </div>
+
                   <div className="resp-stat-value">{v}</div>
                   <div className="resp-stat-label">{l}</div>
                   <div className="resp-stat-footer">{f}</div>
@@ -1196,14 +1531,19 @@ export default function ResponsablePage() {
               <div className="resp-panel resp-chart-panel">
                 <div className="resp-panel-header">
                   <div>
-                    <h3><ChartNoAxesCombined size={19} /> État des appels d'offres</h3>
+                    <h3>
+                      <ChartNoAxesCombined size={19} />
+                      État des appels d'offres
+                    </h3>
                     <p>Répartition des dossiers par statut</p>
                   </div>
+
                   <span className="resp-panel-badge">En temps réel</span>
                 </div>
 
                 <div className="rx-chart-layout">
                   <DonutChart segments={segments} total={stats.total} />
+
                   <div className="rx-legend">
                     {segments.map((s) => (
                       <div className="rx-legend-row" key={s.key}>
@@ -1220,10 +1560,14 @@ export default function ResponsablePage() {
               <div className="resp-panel">
                 <div className="resp-panel-header">
                   <div>
-                    <h3><CalendarDays size={19} /> Échéances par mois</h3>
+                    <h3>
+                      <CalendarDays size={19} />
+                      Échéances par mois
+                    </h3>
                     <p>Dates limites de dépôt sur 6 mois</p>
                   </div>
                 </div>
+
                 <ColumnChart data={parMois} />
               </div>
             </div>
@@ -1232,17 +1576,24 @@ export default function ResponsablePage() {
               <div className="resp-panel">
                 <div className="resp-panel-header">
                   <div>
-                    <h3><FolderKanban size={19} /> Appels par catégorie</h3>
+                    <h3>
+                      <FolderKanban size={19} />
+                      Appels par catégorie
+                    </h3>
                     <p>Les catégories les plus utilisées</p>
                   </div>
                 </div>
+
                 <BarList data={parCategorie} emptyText="Aucune donnée disponible." />
               </div>
 
               <div className="resp-panel resp-summary-panel">
                 <div className="resp-panel-header">
                   <div>
-                    <h3><TrendingUp size={19} /> Résumé d'activité</h3>
+                    <h3>
+                      <TrendingUp size={19} />
+                      Résumé d'activité
+                    </h3>
                     <p>Indicateurs de performance</p>
                   </div>
                 </div>
@@ -1251,33 +1602,48 @@ export default function ResponsablePage() {
 
                 <div className="resp-summary-list" style={{ marginTop: 18 }}>
                   <div className="resp-summary-item">
-                    <div className="resp-summary-icon green-bg"><CheckCircle2 size={20} /></div>
+                    <div className="resp-summary-icon green-bg">
+                      <CheckCircle2 size={20} />
+                    </div>
+
                     <div className="resp-summary-text">
                       <strong>Marchés attribués</strong>
                       <span>Décisions enregistrées</span>
                     </div>
+
                     <b>{stats.attribues}</b>
                   </div>
+
                   <div className="resp-summary-item">
-                    <div className="resp-summary-icon orange-bg"><Clock size={20} /></div>
+                    <div className="resp-summary-icon orange-bg">
+                      <Clock size={20} />
+                    </div>
+
                     <div className="resp-summary-text">
                       <strong>En attente de publication</strong>
                       <span>Dossiers en préparation</span>
                     </div>
+
                     <b>{stats.brouillons}</b>
                   </div>
+
                   <div className="resp-summary-item">
-                    <div className="resp-summary-icon red-bg"><AlertTriangle size={20} /></div>
+                    <div className="resp-summary-icon red-bg">
+                      <AlertTriangle size={20} />
+                    </div>
+
                     <div className="resp-summary-text">
                       <strong>Dates dépassées</strong>
                       <span>Appels à vérifier</span>
                     </div>
+
                     <b>{stats.enRetard}</b>
                   </div>
                 </div>
 
                 <button className="resp-outline-button" onClick={() => setActiveMenu("publication")}>
-                  Gérer les publications <ArrowUpRight size={16} />
+                  Gérer les publications
+                  <ArrowUpRight size={16} />
                 </button>
               </div>
             </div>
@@ -1285,11 +1651,16 @@ export default function ResponsablePage() {
             <div className="resp-panel resp-table-panel">
               <div className="resp-panel-header">
                 <div>
-                  <h3><ClipboardList size={19} /> Derniers appels d'offres</h3>
+                  <h3>
+                    <ClipboardList size={19} />
+                    Derniers appels d'offres
+                  </h3>
                   <p>Les cinq derniers dossiers enregistrés</p>
                 </div>
+
                 <button className="resp-outline-button" onClick={() => setActiveMenu("appels")}>
-                  Voir tous <ArrowUpRight size={16} />
+                  Voir tous
+                  <ArrowUpRight size={16} />
                 </button>
               </div>
 
@@ -1297,30 +1668,47 @@ export default function ResponsablePage() {
                 <table className="resp-table">
                   <thead>
                     <tr>
-                      <th>Référence</th><th>Objet</th><th>Type</th><th>Catégorie</th>
-                      <th>Statut</th><th>Date limite</th><th>Actions</th>
+                      <th>Référence</th>
+                      <th>Objet</th>
+                      <th>Type</th>
+                      <th>Catégorie</th>
+                      <th>Statut</th>
+                      <th>Date limite</th>
+                      <th>Actions</th>
                     </tr>
                   </thead>
+
                   <tbody>
                     {derniersAppels.map((appel) => (
                       <tr key={appel.idAppelOffre}>
                         <td className="resp-reference">{appel.reference || `AO-${appel.idAppelOffre}`}</td>
                         <td className="resp-object-cell">{appel.objet}</td>
+
                         <td>
-                          <span className={`resp-type-badge ${appel.typeMarche?.toLowerCase()}`}>{appel.typeMarche}</span>
+                          <span className={`resp-type-badge ${appel.typeMarche?.toLowerCase()}`}>
+                            {appel.typeMarche}
+                          </span>
                         </td>
+
                         <td>{getCategoryName(appel.categorieMarche)}</td>
+
                         <td>
-                          <span className={`resp-status ${getStatusClass(appel.statut)}`}>{getStatusLabel(appel.statut)}</span>
+                          <span className={`resp-status ${getStatusClass(appel.statut)}`}>
+                            {getStatusLabel(appel.statut)}
+                          </span>
                         </td>
+
                         <td>{formatDate(appel.dateLimiteDepot)}</td>
+
                         <td>
                           <div className="resp-action-group">
                             <button className="resp-action view" title="Consulter" onClick={() => afficherDetail(appel)}>
                               <Eye size={16} />
                             </button>
+
                             <button
-                              className="resp-action edit" title="Modifier"
+                              className="resp-action edit"
+                              title="Modifier"
                               disabled={appel.statut !== "BROUILLON"}
                               onClick={() => ouvrirModification(appel)}
                             >
@@ -1330,8 +1718,13 @@ export default function ResponsablePage() {
                         </td>
                       </tr>
                     ))}
+
                     {derniersAppels.length === 0 && (
-                      <tr><td colSpan="7" className="resp-empty-table">Aucun appel d'offres enregistré.</td></tr>
+                      <tr>
+                        <td colSpan="7" className="resp-empty-table">
+                          Aucun appel d'offres enregistré.
+                        </td>
+                      </tr>
                     )}
                   </tbody>
                 </table>
@@ -1340,7 +1733,8 @@ export default function ResponsablePage() {
           </section>
         )}
 
-        {/* ================= APPELS D'OFFRES ================= */}
+        {/* APPELS D'OFFRES */}
+
         {activeMenu === "appels" && (
           <section className="resp-content">
             <div className="resp-page-intro">
@@ -1348,14 +1742,17 @@ export default function ResponsablePage() {
                 <h2>Gestion des appels d'offres</h2>
                 <p>Créez, publiez et suivez les appels d'offres du SPAT.</p>
               </div>
+
               <button className="resp-primary-button" onClick={ouvrirCreation}>
-                <Plus size={18} /> Créer un appel
+                <Plus size={18} />
+                Créer un appel
               </button>
             </div>
 
             <div className="resp-filter-panel">
               <div className="resp-search-box">
                 <Search size={19} />
+
                 <input
                   type="search"
                   placeholder="Rechercher par référence, objet, lieu..."
@@ -1366,6 +1763,7 @@ export default function ResponsablePage() {
 
               <div className="resp-select-filter">
                 <Filter size={17} />
+
                 <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
                   <option value="">Tous les statuts</option>
                   <option value="BROUILLON">Brouillon</option>
@@ -1385,7 +1783,8 @@ export default function ResponsablePage() {
               </div>
 
               <button className="resp-export-button" onClick={exporterCSV}>
-                <Download size={17} /> Exporter
+                <Download size={17} />
+                Exporter
               </button>
             </div>
 
@@ -1395,8 +1794,10 @@ export default function ResponsablePage() {
                   <h3>Liste des appels d'offres</h3>
                   <p>{filteredAppels.length} dossier(s) trouvé(s)</p>
                 </div>
+
                 <button className="resp-refresh-button" onClick={() => chargerDonnees(false)}>
-                  <RefreshCw size={16} className={refreshing ? "resp-spin" : ""} /> Actualiser
+                  <RefreshCw size={16} className={refreshing ? "resp-spin" : ""} />
+                  Actualiser
                 </button>
               </div>
 
@@ -1404,32 +1805,53 @@ export default function ResponsablePage() {
                 <table className="resp-table">
                   <thead>
                     <tr>
-                      <th>Référence</th><th>Objet</th><th>Type</th><th>Catégorie</th>
-                      <th>Montant estimé</th><th>Date limite</th><th>Statut</th><th>Actions</th>
+                      <th>Référence</th>
+                      <th>Objet</th>
+                      <th>Type</th>
+                      <th>Catégorie</th>
+                      <th>Montant estimé</th>
+                      <th>Date limite</th>
+                      <th>Statut</th>
+                      <th>Actions</th>
                     </tr>
                   </thead>
+
                   <tbody>
                     {filteredAppels.map((appel) => (
                       <tr key={appel.idAppelOffre}>
                         <td className="resp-reference">{appel.reference || `AO-${appel.idAppelOffre}`}</td>
+
                         <td className="resp-object-cell">
                           <strong>{appel.objet}</strong>
                           <span>{appel.lieuExecution || "Lieu non renseigné"}</span>
                         </td>
+
                         <td>
-                          <span className={`resp-type-badge ${appel.typeMarche?.toLowerCase()}`}>{appel.typeMarche}</span>
+                          <span className={`resp-type-badge ${appel.typeMarche?.toLowerCase()}`}>
+                            {appel.typeMarche}
+                          </span>
                         </td>
+
                         <td>{getCategoryName(appel.categorieMarche)}</td>
                         <td>{formatMontant(appel.montantEstime)}</td>
                         <td>{formatDate(appel.dateLimiteDepot)}</td>
+
                         <td>
-                          <span className={`resp-status ${getStatusClass(appel.statut)}`}>{getStatusLabel(appel.statut)}</span>
+                          <span className={`resp-status ${getStatusClass(appel.statut)}`}>
+                            {getStatusLabel(appel.statut)}
+                          </span>
                         </td>
+
                         <td>{renderActionsLigne(appel)}</td>
                       </tr>
                     ))}
+
                     {filteredAppels.length === 0 && (
-                      <tr><td colSpan="8" className="resp-empty-table">Aucun résultat trouvé.</td></tr>
+                      <tr>
+                        <td colSpan="8" className="resp-empty-table">
+                          Aucun résultat trouvé.
+                        </td>
+                      </tr>
                     )}
                   </tbody>
                 </table>
@@ -1438,36 +1860,53 @@ export default function ResponsablePage() {
           </section>
         )}
 
-        {/* ================= PUBLICATION ================= */}
+        {/* PUBLICATION */}
+
         {activeMenu === "publication" && (
           <section className="resp-content">
             <div className="resp-page-intro">
               <div>
                 <h2>Publication des appels d'offres</h2>
-                <p>Vérifiez chaque brouillon, puis publiez-le pour l'ouvrir aux soumissionnaires.</p>
+                <p>
+                  Vérifiez chaque brouillon, puis publiez-le : il est ouvert aux soumissionnaires et publié automatiquement sur Facebook.
+                </p>
               </div>
+
               <button className="resp-primary-button" onClick={ouvrirCreation}>
-                <Plus size={18} /> Créer un appel
+                <Plus size={18} />
+                Créer un appel
               </button>
             </div>
 
             <div className="rx-pub-summary">
               <div className="rx-pub-kpi">
                 <Clock size={28} color="#f59e0b" />
-                <div><b>{aPublier.length}</b><span>À publier</span></div>
+                <div>
+                  <b>{aPublier.length}</b>
+                  <span>À publier</span>
+                </div>
               </div>
+
               <div className="rx-pub-kpi">
                 <Megaphone size={28} color="#1768e5" />
-                <div><b>{dejaPublies.length}</b><span>Actuellement publiés</span></div>
+                <div>
+                  <b>{dejaPublies.length}</b>
+                  <span>Actuellement publiés</span>
+                </div>
               </div>
+
               <div className="rx-pub-kpi">
                 <AlertTriangle size={28} color="#ef4444" />
-                <div><b>{stats.enRetard}</b><span>Échéance dépassée</span></div>
+                <div>
+                  <b>{stats.enRetard}</b>
+                  <span>Échéance dépassée</span>
+                </div>
               </div>
             </div>
 
             <h3 className="rx-section-title">
-              Brouillons à publier <span>{aPublier.length}</span>
+              Brouillons à publier
+              <span>{aPublier.length}</span>
             </h3>
 
             <div className="rx-pub-grid">
@@ -1485,10 +1924,25 @@ export default function ResponsablePage() {
                     <h4>{appel.objet}</h4>
 
                     <div className="rx-pub-meta">
-                      <div><span>Type</span><strong>{appel.typeMarche === "SERVICE" ? "Service" : "Fourniture"}</strong></div>
-                      <div><span>Catégorie</span><strong>{getCategoryName(appel.categorieMarche)}</strong></div>
-                      <div><span>Montant estimé</span><strong>{formatMontant(appel.montantEstime)}</strong></div>
-                      <div><span>Date limite</span><strong>{formatDateHeure(appel.dateLimiteDepot)}</strong></div>
+                      <div>
+                        <span>Type</span>
+                        <strong>{appel.typeMarche === "SERVICE" ? "Service" : "Fourniture"}</strong>
+                      </div>
+
+                      <div>
+                        <span>Catégorie</span>
+                        <strong>{getCategoryName(appel.categorieMarche)}</strong>
+                      </div>
+
+                      <div>
+                        <span>Montant estimé</span>
+                        <strong>{formatMontant(appel.montantEstime)}</strong>
+                      </div>
+
+                      <div>
+                        <span>Date limite</span>
+                        <strong>{formatDateHeure(appel.dateLimiteDepot)}</strong>
+                      </div>
                     </div>
 
                     <ul className="rx-checklist">
@@ -1506,21 +1960,29 @@ export default function ResponsablePage() {
                         className="rx-btn-publish"
                         disabled={!pret || occupe}
                         onClick={() => executerAction(appel, "publier")}
-                        title={!pret ? "Complétez les informations obligatoires avant publication" : "Publier cet appel d'offres"}
+                        title={
+                          !pret
+                            ? "Complétez les informations obligatoires avant publication"
+                            : "Publier cet appel d'offres (et sur Facebook)"
+                        }
                       >
                         {occupe ? <RefreshCw size={17} className="resp-spin" /> : <Send size={17} />}
                         {occupe ? "Vérification..." : "Publier"}
                       </button>
 
                       <button
-                        type="button" className="rx-btn-ghost"
-                        onClick={() => ouvrirModification(appel)} disabled={occupe}
+                        type="button"
+                        className="rx-btn-ghost"
+                        onClick={() => ouvrirModification(appel)}
+                        disabled={occupe}
                       >
-                        <Pencil size={16} /> Modifier
+                        <Pencil size={16} />
+                        Modifier
                       </button>
 
                       <button type="button" className="rx-btn-ghost" onClick={() => afficherDetail(appel)}>
-                        <Eye size={16} /> Aperçu
+                        <Eye size={16} />
+                        Aperçu
                       </button>
                     </div>
                   </article>
@@ -1536,7 +1998,8 @@ export default function ResponsablePage() {
             </div>
 
             <h3 className="rx-section-title">
-              Appels publiés <span>{dejaPublies.length}</span>
+              Appels publiés
+              <span>{dejaPublies.length}</span>
             </h3>
 
             <div className="rx-pub-grid">
@@ -1544,6 +2007,7 @@ export default function ResponsablePage() {
                 <article className="rx-pub-card is-published" key={appel.idAppelOffre}>
                   <div className="rx-pub-top">
                     <span className="rx-pub-ref">{appel.reference || `AO-${appel.idAppelOffre}`}</span>
+
                     <span className={`resp-status ${estEnRetard(appel) ? "annule" : "publie"}`}>
                       {estEnRetard(appel) ? "Échéance dépassée" : "Publié"}
                     </span>
@@ -1552,21 +2016,51 @@ export default function ResponsablePage() {
                   <h4>{appel.objet}</h4>
 
                   <div className="rx-pub-meta">
-                    <div><span>Publié le</span><strong>{formatDate(appel.datePublication)}</strong></div>
-                    <div><span>Date limite</span><strong>{formatDateHeure(appel.dateLimiteDepot)}</strong></div>
-                    <div><span>Catégorie</span><strong>{getCategoryName(appel.categorieMarche)}</strong></div>
-                    <div><span>Lieu</span><strong>{appel.lieuExecution || "Non renseigné"}</strong></div>
+                    <div>
+                      <span>Publié le</span>
+                      <strong>{formatDate(appel.datePublication)}</strong>
+                    </div>
+
+                    <div>
+                      <span>Date limite</span>
+                      <strong>{formatDateHeure(appel.dateLimiteDepot)}</strong>
+                    </div>
+
+                    <div>
+                      <span>Catégorie</span>
+                      <strong>{getCategoryName(appel.categorieMarche)}</strong>
+                    </div>
+
+                    <div>
+                      <span>Lieu</span>
+                      <strong>{appel.lieuExecution || "Non renseigné"}</strong>
+                    </div>
                   </div>
 
                   <div className="rx-pub-actions">
                     <button className="rx-btn-ghost" onClick={() => afficherDetail(appel)}>
-                      <Eye size={16} /> Détails
+                      <Eye size={16} />
+                      Détails
                     </button>
+
+                    <button
+                      className="rx-btn-ghost"
+                      onClick={() => republierFacebook(appel)}
+                      disabled={busyId === appel.idAppelOffre}
+                      title="Publier (ou republier) sur la page Facebook"
+                    >
+                      <Send size={16} />
+                      Facebook
+                    </button>
+
                     <button className="rx-btn-ghost" onClick={() => executerAction(appel, "cloturer")}>
-                      <CheckCircle2 size={16} /> Clôturer
+                      <CheckCircle2 size={16} />
+                      Clôturer
                     </button>
+
                     <button className="rx-btn-ghost rx-btn-danger" onClick={() => executerAction(appel, "annuler")}>
-                      <Ban size={16} /> Annuler
+                      <Ban size={16} />
+                      Annuler
                     </button>
                   </div>
                 </article>
@@ -1582,7 +2076,8 @@ export default function ResponsablePage() {
           </section>
         )}
 
-        {/* ================= CATEGORIES ================= */}
+        {/* CATÉGORIES */}
+
         {activeMenu === "categories" && (
           <section className="resp-content">
             <div className="resp-page-intro">
@@ -1595,11 +2090,15 @@ export default function ResponsablePage() {
             <div className="resp-category-grid">
               {categories.map((categorie) => (
                 <div className="resp-category-card" key={getCategoryId(categorie)}>
-                  <div className="resp-category-icon"><FolderKanban size={25} /></div>
+                  <div className="resp-category-icon">
+                    <FolderKanban size={25} />
+                  </div>
+
                   <div>
                     <h3>{getCategoryName(categorie)}</h3>
                     <p>{categorie.description || "Aucune description disponible."}</p>
                   </div>
+
                   <span className="resp-category-active">Active</span>
                 </div>
               ))}
@@ -1615,7 +2114,8 @@ export default function ResponsablePage() {
           </section>
         )}
 
-        {/* ================= RAPPORTS ================= */}
+        {/* RAPPORTS */}
+
         {activeMenu === "rapports" && (
           <section className="resp-content">
             <div className="resp-page-intro">
@@ -1623,8 +2123,10 @@ export default function ResponsablePage() {
                 <h2>Rapports et statistiques</h2>
                 <p>Vue synthétique des activités des appels d'offres.</p>
               </div>
+
               <button className="resp-export-button" onClick={exporterCSV}>
-                <Download size={17} /> Exporter les données
+                <Download size={17} />
+                Exporter les données
               </button>
             </div>
 
@@ -1636,7 +2138,10 @@ export default function ResponsablePage() {
                 { c: "red", icon: AlertTriangle, v: stats.enRetard, l: "Dossiers en retard" },
               ].map(({ c, icon: Icon, v, l }) => (
                 <div className={`resp-stat-card ${c}`} key={l}>
-                  <div className="resp-stat-icon"><Icon size={22} /></div>
+                  <div className="resp-stat-icon">
+                    <Icon size={22} />
+                  </div>
+
                   <div className="resp-stat-value">{v}</div>
                   <div className="resp-stat-label">{l}</div>
                 </div>
@@ -1651,8 +2156,10 @@ export default function ResponsablePage() {
                     <p>État actuel de tous les appels d'offres</p>
                   </div>
                 </div>
+
                 <div className="rx-chart-layout">
                   <DonutChart segments={segments} total={stats.total} />
+
                   <div className="rx-legend">
                     {segments.map((s) => (
                       <div className="rx-legend-row" key={s.key}>
@@ -1673,6 +2180,7 @@ export default function ResponsablePage() {
                     <p>Nombre de dates limites par mois</p>
                   </div>
                 </div>
+
                 <ColumnChart data={parMois} />
               </div>
             </div>
@@ -1684,6 +2192,7 @@ export default function ResponsablePage() {
                   <p>Part de chaque statut dans le total</p>
                 </div>
               </div>
+
               <BarList
                 emptyText="Aucune donnée."
                 data={segments.map((s) => ({ label: s.label, value: s.value, color: s.color }))}
@@ -1698,57 +2207,83 @@ export default function ResponsablePage() {
         </footer>
       </main>
 
-      {/* ============ MODAL CREATION / MODIFICATION ============ */}
+      {/* MODAL CRÉATION / MODIFICATION */}
+
       {modalOpen && (
         <div className="resp-modal-overlay" onMouseDown={fermerModal}>
           <div className="resp-modal resp-large-modal" onMouseDown={(e) => e.stopPropagation()}>
             <div className="resp-modal-header">
               <div>
                 <span className="resp-modal-kicker">GESTION DES MARCHÉS</span>
+
                 <h2>{editingId ? "Modifier l'appel d'offres" : "Nouvel appel d'offres"}</h2>
-                <p>Référence, objet, pièces requises, critères d'évaluation et date limite de dépôt.</p>
+
+                <p>
+                  Objet, pièces requises, critères d'évaluation et date limite de dépôt.
+                </p>
               </div>
-              <button className="resp-modal-close" onClick={fermerModal}><X size={21} /></button>
+
+              <button className="resp-modal-close" onClick={fermerModal}>
+                <X size={21} />
+              </button>
             </div>
 
             <form onSubmit={enregistrerAppel}>
               {modalError && (
-                <div className="rx-modal-error"><AlertTriangle size={17} /> <span>{modalError}</span></div>
+                <div className="rx-modal-error">
+                  <AlertTriangle size={17} />
+                  <span>{modalError}</span>
+                </div>
               )}
 
               <div className="resp-form-grid">
                 <div className="resp-form-group full">
-                  <label>Référence *</label>
+                  <label>Référence</label>
+
                   <input
-                    name="reference"
-                    value={form.reference}
-                    onChange={modifierChamp}
-                    placeholder="Exemple : AO-2026-001"
-                    maxLength={50}
-                    required
+                    className="rx-field-readonly"
+                    value={
+                      editingId && form.reference
+                        ? form.reference
+                        : "Générée automatiquement à l'enregistrement"
+                    }
+                    readOnly
+                    disabled
                   />
-                  <p className="rx-field-hint">Saisie par vos soins. Elle doit être unique.</p>
+
+                  <p className="rx-field-hint">
+                    Format AO-AAAAMMJJ-XXXXXXXX, attribuée par le serveur.
+                  </p>
                 </div>
 
                 <div className="resp-form-group full">
                   <label>Objet de l'appel d'offres *</label>
+
                   <input
-                    name="objet" value={form.objet} onChange={modifierChamp}
+                    name="objet"
+                    value={form.objet}
+                    onChange={modifierChamp}
                     placeholder="Exemple : Fourniture de matériels informatiques"
-                    maxLength={255} required
+                    maxLength={255}
+                    required
                   />
                 </div>
 
                 <div className="resp-form-group full">
                   <label>Description</label>
+
                   <textarea
-                    name="description" value={form.description} onChange={modifierChamp}
-                    placeholder="Décrivez les besoins et les caractéristiques du marché..." rows={4}
+                    name="description"
+                    value={form.description}
+                    onChange={modifierChamp}
+                    placeholder="Décrivez les besoins et les caractéristiques du marché..."
+                    rows={4}
                   />
                 </div>
 
                 <div className="resp-form-group">
                   <label>Type de marché *</label>
+
                   <select name="typeMarche" value={form.typeMarche} onChange={modifierChamp} required>
                     <option value="FOURNITURE">Fourniture</option>
                     <option value="SERVICE">Service</option>
@@ -1757,10 +2292,14 @@ export default function ResponsablePage() {
 
                 <div className="resp-form-group">
                   <label>Catégorie du marché *</label>
+
                   <select name="idCategorie" value={form.idCategorie} onChange={modifierChamp} required>
                     <option value="">Sélectionner une catégorie</option>
+
                     {categories.map((c) => (
-                      <option key={getCategoryId(c)} value={getCategoryId(c)}>{getCategoryName(c)}</option>
+                      <option key={getCategoryId(c)} value={getCategoryId(c)}>
+                        {getCategoryName(c)}
+                      </option>
                     ))}
                   </select>
                 </div>
@@ -1768,74 +2307,107 @@ export default function ResponsablePage() {
                 {form.typeMarche === "FOURNITURE" && (
                   <div className="resp-form-group">
                     <label>Montant estimé (Ar) *</label>
+
                     <input
-                      type="number" name="montantEstime" value={form.montantEstime}
-                      onChange={modifierChamp} min="1" step="0.01"
-                      placeholder="Exemple : 50000000" required
+                      type="number"
+                      name="montantEstime"
+                      value={form.montantEstime}
+                      onChange={modifierChamp}
+                      min="1"
+                      step="0.01"
+                      placeholder="Exemple : 50000000"
+                      required
                     />
                   </div>
                 )}
 
                 <div className="resp-form-group">
                   <label>Date limite de dépôt *</label>
+
                   <input
-                    type="datetime-local" name="dateLimiteDepot"
-                    value={form.dateLimiteDepot} onChange={modifierChamp} required
+                    type="datetime-local"
+                    name="dateLimiteDepot"
+                    value={form.dateLimiteDepot}
+                    onChange={modifierChamp}
+                    required
                   />
                 </div>
 
                 <div className="resp-form-group full">
                   <label>Lieu d'exécution</label>
+
                   <input
-                    name="lieuExecution" value={form.lieuExecution} onChange={modifierChamp}
-                    maxLength={255} placeholder="Exemple : Port de Toamasina"
+                    name="lieuExecution"
+                    value={form.lieuExecution}
+                    onChange={modifierChamp}
+                    maxLength={255}
+                    placeholder="Exemple : Port de Toamasina"
                   />
                 </div>
               </div>
 
-              {/* PIECES REQUISES */}
+              {/* PIÈCES REQUISES */}
+
               <section className="rx-builder-section">
                 <div className="rx-builder-heading">
                   <div>
-                    <h3><ClipboardList size={19} /> Pièces requises pour le dépôt</h3>
+                    <h3>
+                      <ClipboardList size={19} />
+                      Pièces requises pour le dépôt
+                    </h3>
+
                     <p>Le soumissionnaire devra joindre ces documents à son offre.</p>
                   </div>
+
                   <button type="button" className="rx-btn-add" onClick={ajouterPieceForm}>
-                    <Plus size={16} /> Ajouter une pièce
+                    <Plus size={16} />
+                    Ajouter une pièce
                   </button>
                 </div>
+
                 <div className="rx-builder-list">
                   {piecesForm.map((piece, index) => (
                     <div className="rx-builder-item" key={`piece-${index}`}>
                       <div className="rx-builder-number">{index + 1}</div>
+
                       <div className="rx-builder-fields">
                         <label>
                           Nom de la pièce *
+
                           <input
                             value={piece.nomPiece}
                             onChange={(e) => modifierPieceForm(index, "nomPiece", e.target.value)}
-                            placeholder="Ex. : Registre de commerce" maxLength={150}
+                            placeholder="Ex. : Registre de commerce"
+                            maxLength={150}
                           />
                         </label>
+
                         <label>
                           Description (facultatif)
+
                           <input
                             value={piece.description}
                             onChange={(e) => modifierPieceForm(index, "description", e.target.value)}
                             placeholder="Précision sur le document attendu"
                           />
                         </label>
+
                         <label className="rx-required-check">
                           <input
-                            type="checkbox" checked={!!piece.obligatoire}
+                            type="checkbox"
+                            checked={!!piece.obligatoire}
                             onChange={(e) => modifierPieceForm(index, "obligatoire", e.target.checked)}
                           />
+
                           Document obligatoire
                         </label>
                       </div>
+
                       <button
-                        type="button" className="rx-remove-item"
-                        onClick={() => supprimerPieceForm(index)} title="Supprimer cette pièce"
+                        type="button"
+                        className="rx-remove-item"
+                        onClick={() => supprimerPieceForm(index)}
+                        title="Supprimer cette pièce"
                       >
                         <Trash2 size={17} />
                       </button>
@@ -1844,18 +2416,29 @@ export default function ResponsablePage() {
                 </div>
               </section>
 
-              {/* CRITERES D'EVALUATION (grille créée par l'administrateur) */}
+              {/* CRITÈRES D'ÉVALUATION */}
+
               <section className="rx-builder-section">
                 <div className="rx-builder-heading">
                   <div>
-                    <h3><ChartNoAxesCombined size={19} /> Critères d'évaluation</h3>
-                    <p>Choisissez parmi la grille d'évaluation définie par l'administrateur. Le total doit faire 100 %.</p>
+                    <h3>
+                      <ChartNoAxesCombined size={19} />
+                      Critères d'évaluation
+                    </h3>
+
+                    <p>
+                      Choisissez parmi la grille d'évaluation définie par l'administrateur. Le total doit faire 100 %.
+                    </p>
                   </div>
+
                   <button
-                    type="button" className="rx-btn-add" onClick={ajouterCritereForm}
+                    type="button"
+                    className="rx-btn-add"
+                    onClick={ajouterCritereForm}
                     disabled={criteresDisponibles.length === 0}
                   >
-                    <Plus size={16} /> Ajouter un critère
+                    <Plus size={16} />
+                    Ajouter un critère
                   </button>
                 </div>
 
@@ -1867,18 +2450,29 @@ export default function ResponsablePage() {
 
                 <div className="rx-builder-list">
                   {criteresForm.map((critere, index) => {
-                    const ref = criteresDisponibles.find((c) => String(c.idCritere) === String(critere.idCritere));
+                    const ref = criteresDisponibles.find(
+                      (c) => String(c.idCritere) === String(critere.idCritere)
+                    );
+
                     const dejaChoisis = criteresForm
-                      .filter((_, i) => i !== index).map((c) => String(c.idCritere));
+                      .filter((_, i) => i !== index)
+                      .map((c) => String(c.idCritere));
+
                     return (
                       <div className="rx-criterion-item" key={`critere-${index}`}>
                         <label>
                           Critère
-                          <select value={critere.idCritere} onChange={(e) => choisirCritereForm(index, e.target.value)}>
+
+                          <select
+                            value={critere.idCritere}
+                            onChange={(e) => choisirCritereForm(index, e.target.value)}
+                          >
                             <option value="">Sélectionner un critère</option>
+
                             {criteresDisponibles.map((c) => (
                               <option
-                                key={c.idCritere} value={c.idCritere}
+                                key={c.idCritere}
+                                value={c.idCritere}
                                 disabled={dejaChoisis.includes(String(c.idCritere))}
                               >
                                 {c.nomCritere}
@@ -1886,21 +2480,30 @@ export default function ResponsablePage() {
                             ))}
                           </select>
                         </label>
+
                         <label>
                           Pondération (%)
+
                           <input
-                            type="number" min="0.01" max="100" step="0.01"
+                            type="number"
+                            min="0.01"
+                            max="100"
+                            step="0.01"
                             value={critere.ponderation}
                             onChange={(e) => modifierPonderationForm(index, e.target.value)}
                             placeholder="Ex. : 40"
                           />
                         </label>
+
                         <button
-                          type="button" className="rx-remove-item"
-                          onClick={() => supprimerCritereForm(index)} title="Retirer ce critère"
+                          type="button"
+                          className="rx-remove-item"
+                          onClick={() => supprimerCritereForm(index)}
+                          title="Retirer ce critère"
                         >
                           <Trash2 size={17} />
                         </button>
+
                         {ref?.description && <p className="rx-criterion-desc">{ref.description}</p>}
                       </div>
                     );
@@ -1917,21 +2520,38 @@ export default function ResponsablePage() {
 
               <div className="resp-form-note">
                 <AlertTriangle size={16} />
-                La référence est saisie par vos soins et doit être unique. Le dossier est enregistré au statut Brouillon ;
-                pour être publié, il doit contenir au moins une pièce requise et des critères dont le total fait 100 %.
+
+                La référence est générée automatiquement. Le dossier est enregistré au statut Brouillon ;
+                pour être publié (et diffusé sur Facebook), il doit contenir au moins une pièce requise et
+                des critères dont le total fait 100 %.
               </div>
 
               <div className="resp-modal-actions">
-                <button type="button" className="resp-secondary-button" onClick={fermerModal} disabled={saving}>
+                <button
+                  type="button"
+                  className="resp-secondary-button"
+                  onClick={fermerModal}
+                  disabled={saving}
+                >
                   Annuler
                 </button>
+
                 <button type="submit" className="resp-primary-button" disabled={saving || !editReady}>
                   {saving ? (
-                    <><RefreshCw size={17} className="resp-spin" /> Enregistrement...</>
+                    <>
+                      <RefreshCw size={17} className="resp-spin" />
+                      Enregistrement...
+                    </>
                   ) : !editReady && !modalError ? (
-                    <><RefreshCw size={17} className="resp-spin" /> Chargement...</>
+                    <>
+                      <RefreshCw size={17} className="resp-spin" />
+                      Chargement...
+                    </>
                   ) : (
-                    <><CheckCircle2 size={18} /> {editingId ? "Enregistrer les modifications" : "Créer l'appel d'offres"}</>
+                    <>
+                      <CheckCircle2 size={18} />
+                      {editingId ? "Enregistrer les modifications" : "Créer l'appel d'offres"}
+                    </>
                   )}
                 </button>
               </div>
@@ -1940,35 +2560,66 @@ export default function ResponsablePage() {
         </div>
       )}
 
-      {/* ============ MODAL DETAILS ============ */}
+      {/* MODAL DÉTAILS */}
+
       {detailOpen && selectedAppel && (
         <div className="resp-modal-overlay" onMouseDown={() => setDetailOpen(false)}>
           <div className="resp-modal resp-detail-modal" onMouseDown={(e) => e.stopPropagation()}>
             <div className="resp-modal-header">
               <div>
                 <span className="resp-modal-kicker">DÉTAIL DU DOSSIER</span>
+
                 <h2>{selectedAppel.objet}</h2>
+
                 <p>{selectedAppel.reference || `AO-${selectedAppel.idAppelOffre}`}</p>
               </div>
-              <button className="resp-modal-close" onClick={() => setDetailOpen(false)}><X size={21} /></button>
+
+              <button className="resp-modal-close" onClick={() => setDetailOpen(false)}>
+                <X size={21} />
+              </button>
             </div>
 
             <div className="resp-detail-status">
               <span className={`resp-status ${getStatusClass(selectedAppel.statut)}`}>
                 {getStatusLabel(selectedAppel.statut)}
               </span>
+
               <span className={`resp-type-badge ${selectedAppel.typeMarche?.toLowerCase()}`}>
                 {selectedAppel.typeMarche}
               </span>
             </div>
 
             <div className="resp-detail-grid">
-              <div className="resp-detail-item"><span>Référence</span><strong>{selectedAppel.reference || "—"}</strong></div>
-              <div className="resp-detail-item"><span>Catégorie</span><strong>{getCategoryName(selectedAppel.categorieMarche)}</strong></div>
-              <div className="resp-detail-item"><span>Montant estimé</span><strong>{formatMontant(selectedAppel.montantEstime)}</strong></div>
-              <div className="resp-detail-item"><span>Date de publication</span><strong>{formatDate(selectedAppel.datePublication)}</strong></div>
-              <div className="resp-detail-item"><span>Date limite de dépôt</span><strong>{formatDateHeure(selectedAppel.dateLimiteDepot)}</strong></div>
-              <div className="resp-detail-item"><span>Lieu d'exécution</span><strong>{selectedAppel.lieuExecution || "Non renseigné"}</strong></div>
+              <div className="resp-detail-item">
+                <span>Référence</span>
+                <strong>{selectedAppel.reference || "—"}</strong>
+              </div>
+
+              <div className="resp-detail-item">
+                <span>Catégorie</span>
+                <strong>{getCategoryName(selectedAppel.categorieMarche)}</strong>
+              </div>
+
+              <div className="resp-detail-item">
+                <span>Montant estimé</span>
+                <strong>{formatMontant(selectedAppel.montantEstime)}</strong>
+              </div>
+
+              <div className="resp-detail-item">
+                <span>Date de publication</span>
+                <strong>{formatDate(selectedAppel.datePublication)}</strong>
+              </div>
+
+              <div className="resp-detail-item">
+                <span>Date limite de dépôt</span>
+                <strong>{formatDateHeure(selectedAppel.dateLimiteDepot)}</strong>
+              </div>
+
+              <div className="resp-detail-item">
+                <span>Lieu d'exécution</span>
+                <strong>{selectedAppel.lieuExecution || "Non renseigné"}</strong>
+              </div>
+
               <div className="resp-detail-item full">
                 <span>Description</span>
                 <p>{selectedAppel.description || "Aucune description disponible."}</p>
@@ -1976,7 +2627,11 @@ export default function ResponsablePage() {
             </div>
 
             <div className="rx-detail-block">
-              <h4><ClipboardList size={17} /> Pièces requises</h4>
+              <h4>
+                <ClipboardList size={17} />
+                Pièces requises
+              </h4>
+
               {detailData.loading ? (
                 <p className="rx-muted">Chargement...</p>
               ) : detailData.error ? (
@@ -1991,6 +2646,7 @@ export default function ResponsablePage() {
                         {p.nomPiece}
                         {p.description && <small>{p.description}</small>}
                       </div>
+
                       <span className={`rx-tag ${p.obligatoire === false ? "opt" : ""}`}>
                         {p.obligatoire === false ? "Facultatif" : "Obligatoire"}
                       </span>
@@ -2001,7 +2657,11 @@ export default function ResponsablePage() {
             </div>
 
             <div className="rx-detail-block">
-              <h4><ChartNoAxesCombined size={17} /> Critères d'évaluation</h4>
+              <h4>
+                <ChartNoAxesCombined size={17} />
+                Critères d'évaluation
+              </h4>
+
               {detailData.loading ? (
                 <p className="rx-muted">Chargement...</p>
               ) : detailData.error ? null : detailData.criteres.length === 0 ? (
@@ -2019,21 +2679,32 @@ export default function ResponsablePage() {
             </div>
 
             <div className="resp-modal-actions">
-              <button className="resp-secondary-button" onClick={() => setDetailOpen(false)}>Fermer</button>
+              <button className="resp-secondary-button" onClick={() => setDetailOpen(false)}>
+                Fermer
+              </button>
 
               {selectedAppel.statut === "BROUILLON" && (
                 <>
                   <button
                     className="resp-secondary-button"
-                    onClick={() => { setDetailOpen(false); ouvrirModification(selectedAppel); }}
+                    onClick={() => {
+                      setDetailOpen(false);
+                      ouvrirModification(selectedAppel);
+                    }}
                   >
-                    <Pencil size={17} /> Modifier
+                    <Pencil size={17} />
+                    Modifier
                   </button>
+
                   <button
                     className="resp-primary-button"
-                    onClick={() => { setDetailOpen(false); executerAction(selectedAppel, "publier"); }}
+                    onClick={() => {
+                      setDetailOpen(false);
+                      executerAction(selectedAppel, "publier");
+                    }}
                   >
-                    <Send size={17} /> Publier
+                    <Send size={17} />
+                    Publier
                   </button>
                 </>
               )}
@@ -2042,14 +2713,19 @@ export default function ResponsablePage() {
         </div>
       )}
 
-      {/* ============ CONFIRMATION ============ */}
+      {/* CONFIRMATION */}
+
       {confirmState && (
         <div className="rx-confirm-overlay" onMouseDown={() => setConfirmState(null)}>
           <div className="rx-confirm" onMouseDown={(e) => e.stopPropagation()}>
             <h3>{confirmState.title}</h3>
             <p>{confirmState.message}</p>
+
             <div className="rx-confirm-actions">
-              <button className="rx-btn-ghost" onClick={() => setConfirmState(null)}>Retour</button>
+              <button className="rx-btn-ghost" onClick={() => setConfirmState(null)}>
+                Retour
+              </button>
+
               <button
                 className="rx-btn-publish"
                 style={confirmState.danger ? { background: "#ef4444" } : undefined}

@@ -28,35 +28,66 @@ public class PieceRequiseService {
         this.appelOffreRepository = appelOffreRepository;
     }
 
-    // =====================================================
+    // =========================================
     // AFFICHER TOUTES LES PIECES
-    // =====================================================
+    // =========================================
 
     @Transactional(readOnly = true)
     public List<PieceRequise> obtenirToutes() {
-
         return pieceRepository.findAll();
     }
 
-    // =====================================================
-    // AFFICHER LES PIECES D'UN APPEL D'OFFRES
-    // =====================================================
+    // =========================================
+    // AFFICHER LES PIECES POUR LE RESPONSABLE
+    // =========================================
 
     @Transactional(readOnly = true)
-    public List<PieceRequise> obtenirParAppelOffre(Long idAppelOffre) {
-
+    public List<PieceRequise> obtenirParAppelOffre(
+            Long idAppelOffre
+    ) {
         verifierId(idAppelOffre);
 
         verifierAppelOffre(idAppelOffre);
 
-        return pieceRepository.findByAppelOffre_IdAppelOffre(
-                idAppelOffre
-        );
+        return pieceRepository
+                .findByAppelOffre_IdAppelOffreOrderByIdPieceAsc(
+                        idAppelOffre
+                );
     }
 
-    // =====================================================
-    // AFFICHER UNE PIECE PAR SON ID
-    // =====================================================
+    // =========================================
+    // AFFICHER LES PIECES PUBLIQUES
+    // UNIQUEMENT SI L'AO EST PUBLIE
+    // =========================================
+
+    @Transactional(readOnly = true)
+    public List<PieceRequise> obtenirPiecesPubliques(
+            Long idAppelOffre
+    ) {
+        verifierId(idAppelOffre);
+
+        AppelOffre appelOffre = verifierAppelOffre(idAppelOffre);
+
+        if (appelOffre.getStatut() == null
+                || !"PUBLIE".equalsIgnoreCase(
+                appelOffre.getStatut()
+        )) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.NOT_FOUND,
+                    "Cet appel d'offres n'est pas disponible publiquement."
+            );
+        }
+
+        return pieceRepository
+                .findByAppelOffre_IdAppelOffreOrderByIdPieceAsc(
+                        idAppelOffre
+                );
+    }
+
+    // =========================================
+    // AFFICHER UNE PIECE PAR ID
+    // =========================================
 
     @Transactional(readOnly = true)
     public PieceRequise obtenirParId(Long id) {
@@ -70,9 +101,9 @@ public class PieceRequiseService {
                 ));
     }
 
-    // =====================================================
+    // =========================================
     // AJOUTER UNE PIECE REQUISE
-    // =====================================================
+    // =========================================
 
     public PieceRequise ajouter(
             Long idAppelOffre,
@@ -88,7 +119,10 @@ public class PieceRequiseService {
             );
         }
 
-        AppelOffre appelOffre = verifierAppelOffre(idAppelOffre);
+        AppelOffre appelOffre =
+                verifierAppelOffre(idAppelOffre);
+
+        verifierAppelOffreModifiable(appelOffre);
 
         if (piece.getNomPiece() == null
                 || piece.getNomPiece().trim().isEmpty()) {
@@ -110,9 +144,9 @@ public class PieceRequiseService {
         return pieceRepository.save(piece);
     }
 
-    // =====================================================
+    // =========================================
     // MODIFIER UNE PIECE REQUISE
-    // =====================================================
+    // =========================================
 
     public PieceRequise modifier(
             Long id,
@@ -130,6 +164,8 @@ public class PieceRequiseService {
 
         PieceRequise piece = obtenirParId(id);
 
+        verifierAppelOffreModifiable(piece.getAppelOffre());
+
         if (donnees.getNomPiece() == null
                 || donnees.getNomPiece().trim().isEmpty()) {
 
@@ -142,18 +178,16 @@ public class PieceRequiseService {
         piece.setNomPiece(donnees.getNomPiece().trim());
         piece.setDescription(donnees.getDescription());
 
-        piece.setObligatoire(
-                donnees.getObligatoire() != null
-                        ? donnees.getObligatoire()
-                        : true
-        );
+        if (donnees.getObligatoire() != null) {
+            piece.setObligatoire(donnees.getObligatoire());
+        }
 
         return pieceRepository.save(piece);
     }
 
-    // =====================================================
+    // =========================================
     // SUPPRIMER UNE PIECE REQUISE
-    // =====================================================
+    // =========================================
 
     public void supprimer(Long id) {
 
@@ -161,12 +195,14 @@ public class PieceRequiseService {
 
         PieceRequise piece = obtenirParId(id);
 
+        verifierAppelOffreModifiable(piece.getAppelOffre());
+
         pieceRepository.delete(piece);
     }
 
-    // =====================================================
+    // =========================================
     // VERIFIER L'EXISTENCE D'UN APPEL D'OFFRES
-    // =====================================================
+    // =========================================
 
     private AppelOffre verifierAppelOffre(Long id) {
 
@@ -177,9 +213,32 @@ public class PieceRequiseService {
                 ));
     }
 
-    // =====================================================
+    // =========================================
+    // VERIFIER SI L'APPEL D'OFFRES EST MODIFIABLE
+    // =========================================
+
+    private void verifierAppelOffreModifiable(
+            AppelOffre appelOffre
+    ) {
+
+        if (appelOffre == null) {
+            throw new ResponseStatusException(
+                    HttpStatus.NOT_FOUND,
+                    "Appel d'offres introuvable."
+            );
+        }
+
+        if ("PUBLIE".equalsIgnoreCase(appelOffre.getStatut())) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Impossible de modifier les pièces d'un appel d'offres déjà publié."
+            );
+        }
+    }
+
+    // =========================================
     // VERIFIER UN IDENTIFIANT
-    // =====================================================
+    // =========================================
 
     private void verifierId(Long id) {
 

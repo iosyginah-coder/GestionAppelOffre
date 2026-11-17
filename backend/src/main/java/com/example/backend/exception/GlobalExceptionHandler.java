@@ -84,6 +84,17 @@ public class GlobalExceptionHandler {
                         "Corps JSON invalide ou type de donnée incorrect."));
     }
 
+    // Erreurs de validation métier (ex. pondération invalide) : 400 et non 500
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<Map<String, String>> handleIllegalArgument(
+            IllegalArgumentException ex) {
+
+        return ResponseEntity.badRequest()
+                .body(Map.of("message", ex.getMessage() != null
+                        ? ex.getMessage()
+                        : "Requête invalide."));
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, String>> handleUnexpected(Exception ex) {
 

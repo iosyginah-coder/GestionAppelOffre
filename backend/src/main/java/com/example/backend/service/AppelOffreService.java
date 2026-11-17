@@ -43,8 +43,7 @@ public class AppelOffreService {
     }
 
     private ResponseStatusException erreur(
-            HttpStatus statut,
-            String message) {
+            HttpStatus statut, String message) {
 
         return new ResponseStatusException(statut, message);
     }
@@ -58,8 +57,7 @@ public class AppelOffreService {
                 ));
     }
 
-    // Récupérer le responsable connecté
-
+    // Responsable connecté
     private Utilisateur trouverResponsableConnecte() {
 
         Authentication authentication =
@@ -105,8 +103,7 @@ public class AppelOffreService {
         return responsable;
     }
 
-    // Générer une référence unique
-
+    // Génération référence
     private String genererReference() {
 
         String date = LocalDateTime.now().format(
@@ -122,8 +119,7 @@ public class AppelOffreService {
         return "AO-" + date + "-" + code;
     }
 
-    // Récupérer une catégorie active
-
+    // Catégorie active
     private CategorieMarche trouverCategorieActive(AppelOffre appel) {
 
         if (appel.getCategorieMarche() == null
@@ -156,15 +152,11 @@ public class AppelOffreService {
         return categorie;
     }
 
-    // Validation des données
-
+    // Validation
     private void validerDonnees(AppelOffre appel) {
 
         if (appel == null) {
-            throw erreur(
-                    HttpStatus.BAD_REQUEST,
-                    "Les données de l'appel d'offres sont obligatoires."
-            );
+            throw erreur(HttpStatus.BAD_REQUEST, "Données obligatoires.");
         }
 
         if (appel.getObjet() == null
@@ -172,12 +164,11 @@ public class AppelOffreService {
 
             throw erreur(
                     HttpStatus.BAD_REQUEST,
-                    "L'objet de l'appel d'offres est obligatoire."
+                    "L'objet est obligatoire."
             );
         }
 
         if (appel.getObjet().trim().length() > 255) {
-
             throw erreur(
                     HttpStatus.BAD_REQUEST,
                     "L'objet ne doit pas dépasser 255 caractères."
@@ -185,10 +176,9 @@ public class AppelOffreService {
         }
 
         if (appel.getDateLimiteDepot() == null) {
-
             throw erreur(
                     HttpStatus.BAD_REQUEST,
-                    "La date limite de dépôt est obligatoire."
+                    "La date limite est obligatoire."
             );
         }
 
@@ -198,7 +188,7 @@ public class AppelOffreService {
 
             throw erreur(
                     HttpStatus.BAD_REQUEST,
-                    "Le type de marché doit être FOURNITURE ou SERVICE."
+                    "Type de marché invalide."
             );
         }
 
@@ -207,16 +197,16 @@ public class AppelOffreService {
         if ("FOURNITURE".equals(type)) {
 
             if (appel.getMontantEstime() == null
-                    || appel.getMontantEstime().compareTo(BigDecimal.ZERO) <= 0) {
+                    || appel.getMontantEstime()
+                    .compareTo(BigDecimal.ZERO) <= 0) {
 
                 throw erreur(
                         HttpStatus.BAD_REQUEST,
-                        "Le montant estimé est obligatoire et doit être supérieur à zéro pour un marché de fourniture."
+                        "Le montant estimé est obligatoire pour une fourniture."
                 );
             }
 
         } else {
-
             appel.setMontantEstime(null);
         }
 
@@ -225,7 +215,7 @@ public class AppelOffreService {
 
             throw erreur(
                     HttpStatus.BAD_REQUEST,
-                    "Le lieu d'exécution ne doit pas dépasser 255 caractères."
+                    "Lieu d'exécution trop long."
             );
         }
 
@@ -234,19 +224,16 @@ public class AppelOffreService {
 
         if (appel.getDescription() != null
                 && appel.getDescription().isBlank()) {
-
             appel.setDescription(null);
         }
 
         if (appel.getLieuExecution() != null
                 && appel.getLieuExecution().isBlank()) {
-
             appel.setLieuExecution(null);
         }
     }
 
-    // 1. LISTE COMPLETE
-
+    // 1. Liste complète
     @Transactional(readOnly = true)
     public List<AppelOffre> obtenirTous() {
 
@@ -254,24 +241,27 @@ public class AppelOffreService {
                 .findAllByOrderByIdAppelOffreDesc();
     }
 
-    // 2. DETAIL
+    // 2. Publications accessibles sans authentification
+    @Transactional(readOnly = true)
+    public List<AppelOffre> obtenirOffresPubliees() {
 
+        return appelOffreRepository
+                .findByStatutIgnoreCaseOrderByDatePublicationDesc("PUBLIE");
+    }
+
+    // 3. Détail
     @Transactional(readOnly = true)
     public AppelOffre obtenirParId(Long id) {
-
         return trouver(id);
     }
 
-    // 3. CREATION
-
+    // 4. Création
     public AppelOffre creer(AppelOffre appel) {
 
         validerDonnees(appel);
 
         Utilisateur responsable = trouverResponsableConnecte();
-
-        CategorieMarche categorie =
-                trouverCategorieActive(appel);
+        CategorieMarche categorie = trouverCategorieActive(appel);
 
         appel.setIdAppelOffre(null);
         appel.setReference(genererReference());
@@ -280,58 +270,33 @@ public class AppelOffreService {
         appel.setStatut("BROUILLON");
         appel.setDatePublication(null);
 
-        System.out.println("===== CREATION APPEL OFFRES =====");
-        System.out.println("Référence : " + appel.getReference());
-        System.out.println("Objet : " + appel.getObjet());
-        System.out.println("Type : " + appel.getTypeMarche());
-        System.out.println("Montant : " + appel.getMontantEstime());
-        System.out.println("Catégorie ID : " + categorie.getIdCategorie());
-        System.out.println("Responsable ID : " + responsable.getIdUtilisateur());
-        System.out.println("Date limite : " + appel.getDateLimiteDepot());
-
         try {
-
-            AppelOffre nouvelAppel =
-                    appelOffreRepository.saveAndFlush(appel);
-
-            System.out.println("===== ENREGISTREMENT REUSSI =====");
-            System.out.println("ID enregistré : "
-                    + nouvelAppel.getIdAppelOffre());
-            System.out.println("Référence enregistrée : "
-                    + nouvelAppel.getReference());
-
-            return nouvelAppel;
+            return appelOffreRepository.saveAndFlush(appel);
 
         } catch (DataIntegrityViolationException e) {
 
-            System.err.println("===== ERREUR CONTRAINTE BASE DE DONNEES =====");
-            e.printStackTrace();
-
             throw erreur(
                     HttpStatus.CONFLICT,
-                    "Impossible d'enregistrer l'appel d'offres : une contrainte de la base de données est violée. Vérifiez la référence, la catégorie, le responsable et les champs obligatoires."
+                    "Impossible d'enregistrer l'appel d'offres. Vérifiez les contraintes de la base."
             );
         }
     }
 
-    // 4. MODIFICATION
-
+    // 5. Modification
     public AppelOffre modifier(Long id, AppelOffre donnees) {
 
         AppelOffre existant = trouver(id);
 
         if (!"BROUILLON".equalsIgnoreCase(existant.getStatut())) {
-
             throw erreur(
                     HttpStatus.CONFLICT,
-                    "Seul un appel d'offres en BROUILLON peut être modifié."
+                    "Seul un brouillon peut être modifié."
             );
         }
 
         validerDonnees(donnees);
 
-        CategorieMarche categorie =
-                trouverCategorieActive(donnees);
+        CategorieMarche categorie = trouverCategorieActive(donnees);
 
         existant.setObjet(donnees.getObjet());
         existant.setDescription(donnees.getDescription());
@@ -344,102 +309,65 @@ public class AppelOffreService {
         return appelOffreRepository.save(existant);
     }
 
-    // 5. PUBLICATION CORRIGEE
-
+    // 6. Publication
     public AppelOffre publier(Long id) {
-
-        System.out.println("===== DEBUT PUBLICATION =====");
-        System.out.println("ID appel d'offres : " + id);
 
         AppelOffre appel = trouver(id);
 
-        // Vérifier le statut
-
         if (!"BROUILLON".equalsIgnoreCase(appel.getStatut())) {
-
             throw erreur(
                     HttpStatus.CONFLICT,
-                    "Seul un appel d'offres en brouillon peut être publié."
+                    "Seul un brouillon peut être publié."
             );
         }
-
-        // Vérifier les données obligatoires
 
         validerDonnees(appel);
 
-        // Vérifier la catégorie
-
-        CategorieMarche categorie =
-                trouverCategorieActive(appel);
-
+        CategorieMarche categorie = trouverCategorieActive(appel);
         appel.setCategorieMarche(categorie);
-
-        // Vérifier la date limite
 
         LocalDateTime maintenant = LocalDateTime.now();
 
-        if (appel.getDateLimiteDepot() == null
-                || !appel.getDateLimiteDepot().isAfter(maintenant)) {
-
+        if (!appel.getDateLimiteDepot().isAfter(maintenant)) {
             throw erreur(
                     HttpStatus.BAD_REQUEST,
-                    "La date limite de dépôt doit être dans le futur."
+                    "La date limite doit être dans le futur."
             );
         }
-
-        // Vérifier le responsable associé
 
         if (appel.getUtilisateur() == null
                 || appel.getUtilisateur().getIdUtilisateur() == null) {
 
             throw erreur(
                     HttpStatus.BAD_REQUEST,
-                    "Aucun responsable n'est associé à cet appel d'offres."
+                    "Aucun responsable n'est associé à cet appel."
             );
         }
-
-        // Modifier les informations de publication
 
         appel.setStatut("PUBLIE");
         appel.setDatePublication(maintenant);
 
         try {
-
-            AppelOffre publie =
-                    appelOffreRepository.saveAndFlush(appel);
-
-            System.out.println("===== PUBLICATION REUSSIE =====");
-            System.out.println("ID : " + publie.getIdAppelOffre());
-            System.out.println("Référence : " + publie.getReference());
-            System.out.println("Statut : " + publie.getStatut());
-            System.out.println("Date publication : "
-                    + publie.getDatePublication());
-
-            return publie;
+            return appelOffreRepository.saveAndFlush(appel);
 
         } catch (DataIntegrityViolationException e) {
 
-            System.err.println("===== ERREUR PUBLICATION APPEL OFFRES =====");
-            e.printStackTrace();
-
             throw erreur(
                     HttpStatus.CONFLICT,
-                    "La publication a échoué à cause d'une contrainte de la base de données. Vérifiez les champs obligatoires et les contraintes du statut."
+                    "Erreur de contrainte lors de la publication."
             );
         }
     }
 
-    // 6. CLOTURE
-
+    // 7. Clôture
     public AppelOffre cloturer(Long id) {
 
         AppelOffre appel = trouver(id);
 
         if (!"PUBLIE".equalsIgnoreCase(appel.getStatut())) {
-
             throw erreur(
                     HttpStatus.CONFLICT,
-                    "Seul un appel d'offres publié peut être clôturé."
+                    "Seul un appel publié peut être clôturé."
             );
         }
 
@@ -448,8 +376,7 @@ public class AppelOffreService {
         return appelOffreRepository.save(appel);
     }
 
-    // 7. ANNULATION
-
+    // 8. Annulation
     public AppelOffre annuler(Long id) {
 
         AppelOffre appel = trouver(id);
@@ -459,7 +386,7 @@ public class AppelOffreService {
 
             throw erreur(
                     HttpStatus.CONFLICT,
-                    "Cet appel d'offres ne peut plus être annulé."
+                    "Cet appel ne peut plus être annulé."
             );
         }
 
@@ -468,17 +395,15 @@ public class AppelOffreService {
         return appelOffreRepository.save(appel);
     }
 
-    // 8. ATTRIBUTION
-
+    // 9. Attribution
     public AppelOffre attribuer(Long id) {
 
         AppelOffre appel = trouver(id);
 
         if (!"CLOTURE".equalsIgnoreCase(appel.getStatut())) {
-
             throw erreur(
                     HttpStatus.CONFLICT,
-                    "L'appel d'offres doit être clôturé avant l'attribution."
+                    "L'appel doit être clôturé avant attribution."
             );
         }
 
@@ -487,14 +412,12 @@ public class AppelOffreService {
         return appelOffreRepository.save(appel);
     }
 
-    // 9. SUPPRESSION
-
+    // 10. Suppression
     public void supprimer(Long id) {
 
         AppelOffre appel = trouver(id);
 
         if (!"BROUILLON".equalsIgnoreCase(appel.getStatut())) {
-
             throw erreur(
                     HttpStatus.CONFLICT,
                     "Seul un brouillon peut être supprimé."
@@ -504,8 +427,7 @@ public class AppelOffreService {
         appelOffreRepository.delete(appel);
     }
 
-    // 10. RECHERCHE ET FILTRAGE
-
+    // 11. Recherche
     @Transactional(readOnly = true)
     public List<AppelOffre> rechercher(
             String statut,
@@ -528,8 +450,7 @@ public class AppelOffreService {
                 .toList();
     }
 
-    // 11. STATISTIQUES
-
+    // 12. Statistiques
     @Transactional(readOnly = true)
     public Map<String, Object> obtenirStatistiques() {
 
@@ -555,8 +476,7 @@ public class AppelOffreService {
         long enRetard =
                 appelOffreRepository
                         .countByStatutIgnoreCaseAndDateLimiteDepotBefore(
-                                "PUBLIE",
-                                maintenant
+                                "PUBLIE", maintenant
                         );
 
         Map<String, Object> statistiques = new LinkedHashMap<>();

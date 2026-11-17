@@ -3,6 +3,7 @@ package com.example.backend.controller;
 
 import com.example.backend.entity.AppelOffre;
 import com.example.backend.service.AppelOffreService;
+import com.example.backend.service.FacebookService;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -10,6 +11,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -25,24 +27,28 @@ import java.util.Map;
 public class AppelOffreController {
 
     private final AppelOffreService service;
+    private final FacebookService facebookService;
 
-    public AppelOffreController(AppelOffreService service) {
+    public AppelOffreController(
+            AppelOffreService service,
+            FacebookService facebookService) {
+
         this.service = service;
+        this.facebookService = facebookService;
     }
 
     // ==========================================
-    // RESPONSABLE MARCHES : GESTION DES OFFRES
+    // RESPONSABLE MARCHES
     // ==========================================
 
-    // Liste complète des appels d'offres
+    // Liste complète
     @GetMapping
     @PreAuthorize("hasRole('RESPONSABLE_MARCHES')")
     public ResponseEntity<List<AppelOffre>> obtenirTous() {
-
         return ResponseEntity.ok(service.obtenirTous());
     }
 
-    // Recherche et filtrage
+    // Recherche
     @GetMapping("/recherche")
     @PreAuthorize("hasRole('RESPONSABLE_MARCHES')")
     public ResponseEntity<List<AppelOffre>> rechercher(
@@ -59,11 +65,10 @@ public class AppelOffreController {
     @GetMapping("/statistiques")
     @PreAuthorize("hasRole('RESPONSABLE_MARCHES')")
     public ResponseEntity<Map<String, Object>> statistiques() {
-
         return ResponseEntity.ok(service.obtenirStatistiques());
     }
 
-    // Détail d'un appel d'offres pour le responsable
+    // Détail
     @GetMapping("/{id}")
     @PreAuthorize("hasRole('RESPONSABLE_MARCHES')")
     public ResponseEntity<AppelOffre> obtenirParId(
@@ -78,11 +83,8 @@ public class AppelOffreController {
     public ResponseEntity<AppelOffre> creer(
             @RequestBody AppelOffre appel) {
 
-        AppelOffre resultat = service.creer(appel);
-
-        return ResponseEntity
-                .status(HttpStatus.CREATED)
-                .body(resultat);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(service.creer(appel));
     }
 
     // Modification
@@ -92,18 +94,30 @@ public class AppelOffreController {
             @PathVariable Long id,
             @RequestBody AppelOffre appel) {
 
-        return ResponseEntity.ok(
-                service.modifier(id, appel)
-        );
+        return ResponseEntity.ok(service.modifier(id, appel));
     }
 
-    // Publication
+    // Publication SPAT + publication automatique sur Facebook.
+    // La publication SPAT est déjà validée (transaction terminée) avant l'appel
+    // à Facebook : un échec Facebook n'annule donc jamais la publication.
     @PatchMapping("/{id}/publier")
     @PreAuthorize("hasRole('RESPONSABLE_MARCHES')")
-    public ResponseEntity<AppelOffre> publier(
+    public ResponseEntity<Map<String, Object>> publier(
             @PathVariable Long id) {
 
-        return ResponseEntity.ok(service.publier(id));
+        AppelOffre appel = service.publier(id);
+
+        FacebookService.Resultat fb = facebookService.publierAppelOffre(appel);
+
+        Map<String, Object> facebook = new LinkedHashMap<>();
+        facebook.put("success", fb.succes());
+        facebook.put("message", fb.message());
+
+        Map<String, Object> reponse = new LinkedHashMap<>();
+        reponse.put("appelOffre", appel);
+        reponse.put("facebook", facebook);
+
+        return ResponseEntity.ok(reponse);
     }
 
     // Clôture
@@ -140,32 +154,25 @@ public class AppelOffreController {
             @PathVariable Long id) {
 
         service.supprimer(id);
-
         return ResponseEntity.noContent().build();
     }
 
     // ==========================================
-    // SOUMISSIONNAIRE : CONSULTATION DES OFFRES
+    // CONSULTATION PUBLIQUE
+    // AUCUNE AUTHENTIFICATION
     // ==========================================
 
-    // Afficher uniquement les appels d'offres publiés
-    @GetMapping("/soumissionnaire/publications")
-    @PreAuthorize("hasRole('SOUMISSIONNAIRE')")
+    // Liste des appels publiés
+    @GetMapping("/publications")
     public ResponseEntity<List<AppelOffre>> obtenirOffresPubliees() {
 
-        List<AppelOffre> offresPubliees = service.obtenirTous()
-                .stream()
-                .filter(appel ->
-                        "PUBLIE".equalsIgnoreCase(appel.getStatut())
-                )
-                .toList();
-
-        return ResponseEntity.ok(offresPubliees);
+        return ResponseEntity.ok(
+                service.obtenirOffresPubliees()
+        );
     }
 
-    // Consulter le détail d'une offre publiée
-    @GetMapping("/soumissionnaire/publications/{id}")
-    @PreAuthorize("hasRole('SOUMISSIONNAIRE')")
+    // Détail d'un appel publié
+    @GetMapping("/publications/{id}")
     public ResponseEntity<AppelOffre> obtenirDetailOffrePubliee(
             @PathVariable Long id) {
 
@@ -174,10 +181,11 @@ public class AppelOffreController {
         if (!"PUBLIE".equalsIgnoreCase(appel.getStatut())) {
             throw new ResponseStatusException(
                     HttpStatus.NOT_FOUND,
-                    "Cette offre n'est pas disponible."
+                    "Cet appel d'offres n'est pas disponible."
             );
         }
 
         return ResponseEntity.ok(appel);
     }
+
 }

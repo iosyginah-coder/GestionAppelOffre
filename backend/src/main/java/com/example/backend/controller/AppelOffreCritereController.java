@@ -49,7 +49,7 @@ public class AppelOffreCritereController {
 
     // Ajouter un critère à un appel d'offres
     @PostMapping
-    @PreAuthorize("hasRole('ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('ADMINISTRATEUR','RESPONSABLE_MARCHES')")
     public ResponseEntity<AppelOffreCritereDto> ajouter(
             @RequestBody AppelOffreCritereRequest request
     ) {
@@ -66,7 +66,7 @@ public class AppelOffreCritereController {
 
     // Modifier la pondération d'un critère
     @PutMapping("/{id}")
-    @PreAuthorize("hasRole('ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('ADMINISTRATEUR','RESPONSABLE_MARCHES')")
     public ResponseEntity<AppelOffreCritereDto> modifier(
             @PathVariable Long id,
             @RequestBody AppelOffreCritereRequest request
@@ -94,18 +94,31 @@ public class AppelOffreCritereController {
 
     // Supprimer une association
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasRole('ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('ADMINISTRATEUR','RESPONSABLE_MARCHES')")
     public ResponseEntity<Void> supprimer(
             @PathVariable Long id
     ) {
 
-        if (!repository.existsById(id)) {
+        AppelOffreCritere existant = repository.findById(id).orElse(null);
+
+        if (existant == null) {
             return ResponseEntity.notFound().build();
         }
+
+        verifierBrouillon(existant.getAppelOffre());
 
         repository.deleteById(id);
 
         return ResponseEntity.noContent().build();
+    }
+
+    // Les critères ne peuvent changer que tant que l'appel est un brouillon.
+    private void verifierBrouillon(AppelOffre appelOffre) {
+        if (!"BROUILLON".equalsIgnoreCase(appelOffre.getStatut())) {
+            throw new IllegalArgumentException(
+                    "Les critères ne sont modifiables que sur un brouillon."
+            );
+        }
     }
 
     private AppelOffreCritere preparer(
@@ -137,6 +150,8 @@ public class AppelOffreCritereController {
                                 "Appel d'offres introuvable."
                         )
                 );
+
+        verifierBrouillon(appelOffre);
 
         CritereEvaluation critere =
                 critereRepository.findById(
