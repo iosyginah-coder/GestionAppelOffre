@@ -1,11 +1,11 @@
-
 package com.example.backend.service;
 
 import com.example.backend.entity.AppelOffre;
-import com.example.backend.entity.CategorieMarche;
+import com.example.backend.entity.AppelOffreCritere;
 import com.example.backend.entity.Utilisateur;
+import com.example.backend.repository.AppelOffreCritereRepository;
 import com.example.backend.repository.AppelOffreRepository;
-import com.example.backend.repository.CategorieMarcheRepository;
+import com.example.backend.repository.PieceRequiseRepository;
 import com.example.backend.repository.UtilisateurRepository;
 
 import org.springframework.dao.DataIntegrityViolationException;
@@ -16,13 +16,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
 @Service
 @Transactional
@@ -30,16 +27,22 @@ public class AppelOffreService {
 
     private final AppelOffreRepository appelOffreRepository;
     private final UtilisateurRepository utilisateurRepository;
-    private final CategorieMarcheRepository categorieMarcheRepository;
+    private final PieceRequiseRepository pieceRepository;
+    private final AppelOffreCritereRepository critereRepository;
+    private final PhotoAppelOffreService photoService;
 
     public AppelOffreService(
             AppelOffreRepository appelOffreRepository,
             UtilisateurRepository utilisateurRepository,
-            CategorieMarcheRepository categorieMarcheRepository) {
+            PieceRequiseRepository pieceRepository,
+            AppelOffreCritereRepository critereRepository,
+            PhotoAppelOffreService photoService) {
 
         this.appelOffreRepository = appelOffreRepository;
         this.utilisateurRepository = utilisateurRepository;
-        this.categorieMarcheRepository = categorieMarcheRepository;
+        this.pieceRepository = pieceRepository;
+        this.critereRepository = critereRepository;
+        this.photoService = photoService;
     }
 
     private ResponseStatusException erreur(
@@ -103,60 +106,27 @@ public class AppelOffreService {
         return responsable;
     }
 
-    // Génération référence
-    private String genererReference() {
-
-        String date = LocalDateTime.now().format(
-                DateTimeFormatter.ofPattern("yyyyMMdd")
-        );
-
-        String code = UUID.randomUUID()
-                .toString()
-                .replace("-", "")
-                .substring(0, 8)
-                .toUpperCase();
-
-        return "AO-" + date + "-" + code;
-    }
-
-    // Catégorie active
-    private CategorieMarche trouverCategorieActive(AppelOffre appel) {
-
-        if (appel.getCategorieMarche() == null
-                || appel.getCategorieMarche().getIdCategorie() == null) {
-
-            throw erreur(
-                    HttpStatus.BAD_REQUEST,
-                    "La catégorie du marché est obligatoire."
-            );
-        }
-
-        Long idCategorie =
-                appel.getCategorieMarche().getIdCategorie();
-
-        CategorieMarche categorie = categorieMarcheRepository
-                .findById(idCategorie)
-                .orElseThrow(() -> erreur(
-                        HttpStatus.NOT_FOUND,
-                        "Catégorie de marché introuvable."
-                ));
-
-        if (!"ACTIF".equalsIgnoreCase(categorie.getStatut())) {
-
-            throw erreur(
-                    HttpStatus.BAD_REQUEST,
-                    "Cette catégorie est inactive."
-            );
-        }
-
-        return categorie;
-    }
-
-    // Validation
+    // Validation des champs saisis (référence manuelle, objet, date limite, lieu)
     private void validerDonnees(AppelOffre appel) {
 
         if (appel == null) {
             throw erreur(HttpStatus.BAD_REQUEST, "Données obligatoires.");
+        }
+
+        if (appel.getReference() == null
+                || appel.getReference().isBlank()) {
+
+            throw erreur(
+                    HttpStatus.BAD_REQUEST,
+                    "La référence est obligatoire."
+            );
+        }
+
+        if (appel.getReference().trim().length() > 50) {
+            throw erreur(
+                    HttpStatus.BAD_REQUEST,
+                    "La référence ne doit pas dépasser 50 caractères."
+            );
         }
 
         if (appel.getObjet() == null
@@ -182,34 +152,6 @@ public class AppelOffreService {
             );
         }
 
-        if (appel.getTypeMarche() == null
-                || !(appel.getTypeMarche().equalsIgnoreCase("FOURNITURE")
-                || appel.getTypeMarche().equalsIgnoreCase("SERVICE"))) {
-
-            throw erreur(
-                    HttpStatus.BAD_REQUEST,
-                    "Type de marché invalide."
-            );
-        }
-
-        String type = appel.getTypeMarche().trim().toUpperCase();
-
-        if ("FOURNITURE".equals(type)) {
-
-            if (appel.getMontantEstime() == null
-                    || appel.getMontantEstime()
-                    .compareTo(BigDecimal.ZERO) <= 0) {
-
-                throw erreur(
-                        HttpStatus.BAD_REQUEST,
-                        "Le montant estimé est obligatoire pour une fourniture."
-                );
-            }
-
-        } else {
-            appel.setMontantEstime(null);
-        }
-
         if (appel.getLieuExecution() != null
                 && appel.getLieuExecution().length() > 255) {
 
@@ -219,17 +161,45 @@ public class AppelOffreService {
             );
         }
 
+        appel.setReference(appel.getReference().trim());
         appel.setObjet(appel.getObjet().trim());
-        appel.setTypeMarche(type);
 
         if (appel.getDescription() != null
                 && appel.getDescription().isBlank()) {
             appel.setDescription(null);
         }
 
-        if (appel.getLieuExecution() != null
-                && appel.getLieuExecution().isBlank()) {
-            appel.setLieuExecution(null);
+        if (appel.getLieuExecution() != null) {
+            String lieu = appel.getLieuExecution().trim();
+            appel.setLieuExecution(lieu.isEmpty() ? null : lieu);
+        }
+    }
+
+    private void verifierDateFuture(AppelOffre appel) {
+
+        if (!appel.getDateLimiteDepot().isAfter(LocalDateTime.now())) {
+            throw erreur(
+                    HttpStatus.BAD_REQUEST,
+                    "La date limite de dépôt doit être dans le futur."
+            );
+        }
+    }
+
+    // La référence doit être unique (insensible à la casse)
+    private void verifierReferenceLibre(String reference, Long idExclu) {
+
+        boolean existe = idExclu == null
+                ? appelOffreRepository.existsByReferenceIgnoreCase(reference)
+                : appelOffreRepository
+                .existsByReferenceIgnoreCaseAndIdAppelOffreNot(
+                        reference, idExclu
+                );
+
+        if (existe) {
+            throw erreur(
+                    HttpStatus.CONFLICT,
+                    "Cette référence existe déjà. Choisissez une autre référence."
+            );
         }
     }
 
@@ -259,13 +229,13 @@ public class AppelOffreService {
     public AppelOffre creer(AppelOffre appel) {
 
         validerDonnees(appel);
+        verifierDateFuture(appel);
 
         Utilisateur responsable = trouverResponsableConnecte();
-        CategorieMarche categorie = trouverCategorieActive(appel);
+
+        verifierReferenceLibre(appel.getReference(), null);
 
         appel.setIdAppelOffre(null);
-        appel.setReference(genererReference());
-        appel.setCategorieMarche(categorie);
         appel.setUtilisateur(responsable);
         appel.setStatut("BROUILLON");
         appel.setDatePublication(null);
@@ -277,7 +247,7 @@ public class AppelOffreService {
 
             throw erreur(
                     HttpStatus.CONFLICT,
-                    "Impossible d'enregistrer l'appel d'offres. Vérifiez les contraintes de la base."
+                    "Impossible d'enregistrer l'appel d'offres (référence déjà utilisée ou contrainte de la base)."
             );
         }
     }
@@ -295,18 +265,25 @@ public class AppelOffreService {
         }
 
         validerDonnees(donnees);
+        verifierDateFuture(donnees);
+        verifierReferenceLibre(donnees.getReference(), id);
 
-        CategorieMarche categorie = trouverCategorieActive(donnees);
-
+        existant.setReference(donnees.getReference());
         existant.setObjet(donnees.getObjet());
         existant.setDescription(donnees.getDescription());
-        existant.setTypeMarche(donnees.getTypeMarche());
-        existant.setMontantEstime(donnees.getMontantEstime());
         existant.setLieuExecution(donnees.getLieuExecution());
         existant.setDateLimiteDepot(donnees.getDateLimiteDepot());
-        existant.setCategorieMarche(categorie);
 
-        return appelOffreRepository.save(existant);
+        try {
+            return appelOffreRepository.saveAndFlush(existant);
+
+        } catch (DataIntegrityViolationException e) {
+
+            throw erreur(
+                    HttpStatus.CONFLICT,
+                    "Impossible de modifier l'appel d'offres (référence déjà utilisée ou contrainte de la base)."
+            );
+        }
     }
 
     // 6. Publication
@@ -323,15 +300,19 @@ public class AppelOffreService {
 
         validerDonnees(appel);
 
-        CategorieMarche categorie = trouverCategorieActive(appel);
-        appel.setCategorieMarche(categorie);
-
         LocalDateTime maintenant = LocalDateTime.now();
 
         if (!appel.getDateLimiteDepot().isAfter(maintenant)) {
             throw erreur(
                     HttpStatus.BAD_REQUEST,
                     "La date limite doit être dans le futur."
+            );
+        }
+
+        if (pieceRepository.countByAppelOffre_IdAppelOffre(id) == 0) {
+            throw erreur(
+                    HttpStatus.BAD_REQUEST,
+                    "Ajoutez au moins une pièce requise avant de publier."
             );
         }
 
@@ -412,7 +393,8 @@ public class AppelOffreService {
         return appelOffreRepository.save(appel);
     }
 
-    // 10. Suppression
+    // 10. Suppression (brouillon uniquement) : pièces, anciens critères et photos
+    //     sont supprimés avec l'appel pour ne pas bloquer sur les clés étrangères.
     public void supprimer(Long id) {
 
         AppelOffre appel = trouver(id);
@@ -424,23 +406,25 @@ public class AppelOffreService {
             );
         }
 
+        pieceRepository.deleteByAppelOffre_IdAppelOffre(id);
+
+        List<AppelOffreCritere> anciensCriteres =
+                critereRepository.findByAppelOffre_IdAppelOffre(id);
+        critereRepository.deleteAll(anciensCriteres);
+
+        photoService.supprimerToutes(id);
+
         appelOffreRepository.delete(appel);
     }
 
     // 11. Recherche
     @Transactional(readOnly = true)
-    public List<AppelOffre> rechercher(
-            String statut,
-            String typeMarche,
-            String objet) {
+    public List<AppelOffre> rechercher(String statut, String objet) {
 
         return obtenirTous().stream()
 
                 .filter(a -> statut == null || statut.isBlank()
                         || statut.equalsIgnoreCase(a.getStatut()))
-
-                .filter(a -> typeMarche == null || typeMarche.isBlank()
-                        || typeMarche.equalsIgnoreCase(a.getTypeMarche()))
 
                 .filter(a -> objet == null || objet.isBlank()
                         || (a.getObjet() != null

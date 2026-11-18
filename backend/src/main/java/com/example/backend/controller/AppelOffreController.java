@@ -53,11 +53,10 @@ public class AppelOffreController {
     @PreAuthorize("hasRole('RESPONSABLE_MARCHES')")
     public ResponseEntity<List<AppelOffre>> rechercher(
             @RequestParam(required = false) String statut,
-            @RequestParam(required = false) String typeMarche,
             @RequestParam(required = false) String objet) {
 
         return ResponseEntity.ok(
-                service.rechercher(statut, typeMarche, objet)
+                service.rechercher(statut, objet)
         );
     }
 

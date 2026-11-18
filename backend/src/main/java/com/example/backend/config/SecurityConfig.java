@@ -94,6 +94,8 @@ public class SecurityConfig {
                                 HttpMethod.GET,
                                 "/api/appel-offres/publications",
                                 "/api/appel-offres/publications/*",
+                                "/api/appel-offres/publications/*/photos",
+                                "/api/photos/public/*",
                                 "/api/pieces-requises/public/**"
                         ).permitAll()
 

@@ -12,22 +12,17 @@ import java.util.List;
 public interface AppelOffreRepository
         extends JpaRepository<AppelOffre, Long> {
 
-    // Liste complète
+    // Liste complète, du plus récent au plus ancien
     List<AppelOffre> findAllByOrderByIdAppelOffreDesc();
 
-    // Liste par statut
+    // Recherche par statut
     List<AppelOffre> findByStatutIgnoreCaseOrderByIdAppelOffreDesc(
             String statut
     );
 
-    // Publications triées par date
+    // Liste des appels par date de publication
     List<AppelOffre> findByStatutIgnoreCaseOrderByDatePublicationDesc(
             String statut
-    );
-
-    // Liste par type de marché
-    List<AppelOffre> findByTypeMarcheIgnoreCaseOrderByIdAppelOffreDesc(
-            String typeMarche
     );
 
     // Recherche par objet
@@ -35,22 +30,19 @@ public interface AppelOffreRepository
             String objet
     );
 
-    // Recherche statut + type
-    List<AppelOffre> findByStatutIgnoreCaseAndTypeMarcheIgnoreCaseOrderByIdAppelOffreDesc(
-            String statut,
-            String typeMarche
+    // Vérifier si une référence existe déjà
+    boolean existsByReferenceIgnoreCase(String reference);
+
+    // Vérifier si une référence existe déjà pour un autre appel
+    boolean existsByReferenceIgnoreCaseAndIdAppelOffreNot(
+            String reference,
+            Long idAppelOffre
     );
 
-    // Recherche statut + objet
-    List<AppelOffre> findByStatutIgnoreCaseAndObjetContainingIgnoreCaseOrderByIdAppelOffreDesc(
-            String statut,
-            String objet
-    );
-
-    // Compter par statut
+    // Compter les appels par statut
     long countByStatutIgnoreCase(String statut);
 
-    // Compter les appels en retard
+    // Compter les appels publiés dont la date limite est dépassée
     long countByStatutIgnoreCaseAndDateLimiteDepotBefore(
             String statut,
             LocalDateTime date

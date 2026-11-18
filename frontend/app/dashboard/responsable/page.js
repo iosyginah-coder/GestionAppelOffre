@@ -3,11 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  LayoutDashboard, FileText, FolderKanban, ChartNoAxesCombined, Bell, Search,
+  LayoutDashboard, FileText, ChartNoAxesCombined, Bell, Search,
   Plus, Pencil, Trash2, Eye, LogOut, Menu, X, RefreshCw, CheckCircle2, Clock,
   AlertTriangle, Ban, FileCheck, ClipboardList, CalendarDays, Sun, Moon,
   ChevronDown, ChevronRight, Filter, ArrowUpRight, Building2, TrendingUp,
-  CircleHelp, Send, Download, Megaphone, Check,
+  CircleHelp, Send, Download, Megaphone, Check, ImagePlus,
 } from "lucide-react";
 
 import "../../css/responsable.css";
@@ -18,17 +18,18 @@ const MENU = [
   { id: "dashboard", label: "Tableau de bord", icon: LayoutDashboard },
   { id: "appels", label: "Appels d'offres", icon: FileText },
   { id: "publication", label: "Publication", icon: Megaphone },
-  { id: "categories", label: "Catégories", icon: FolderKanban },
   { id: "rapports", label: "Rapports", icon: ChartNoAxesCombined },
 ];
 
-// La référence est générée par le serveur : elle n'est jamais saisie.
+// La référence est saisie manuellement par le responsable.
 const EMPTY_FORM = {
-  reference: "", objet: "", description: "", typeMarche: "FOURNITURE", montantEstime: "",
-  lieuExecution: "", dateLimiteDepot: "", idCategorie: "",
+  reference: "", objet: "", description: "", lieuExecution: "", dateLimiteDepot: "",
 };
 
 const PIECE_VIDE = { nomPiece: "", description: "", obligatoire: true };
+
+const MAX_PHOTOS = 10;
+const MAX_PHOTO_SIZE = 5 * 1024 * 1024; // 5 Mo
 
 const STATUS_COLORS = {
   PUBLIE: "#1768e5",
@@ -80,14 +81,6 @@ function formatDateHeure(value) {
   });
 }
 
-function formatMontant(value) {
-  if (value === null || value === undefined || value === "") return "Non renseigné";
-  return new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 2 }).format(Number(value)) + " Ar";
-}
-
-const getCategoryId = (c) => c?.idCategorie ?? "";
-const getCategoryName = (c) => c?.nomCategorie || "Sans catégorie";
-
 function getStatusClass(status) {
   const classes = {
     BROUILLON: "brouillon", PUBLIE: "publie", CLOTURE: "cloture", ATTRIBUE: "attribue", ANNULE: "annule",
@@ -107,37 +100,18 @@ const getDateInputValue = (value) => (value ? String(value).slice(0, 16) : "");
 const estEnRetard = (a) =>
   a.statut === "PUBLIE" && a.dateLimiteDepot && new Date(a.dateLimiteDepot) < new Date();
 
-const sommePonderations = (liens) =>
-  liens.reduce((sum, l) => sum + (Number(l.ponderation) || 0), 0);
-
-/*
-  Le backend renvoie les liens appel d'offres / critère à plat :
-  { idAppelOffreCritere, ponderation, idAppelOffre, idCritere, nomCritere, ... }
-*/
-const filtrerLiens = (liens, idAppel) =>
-  liens.filter((l) => Number(l.idAppelOffre) === Number(idAppel));
-
 /* ---------- VÉRIFICATIONS AVANT PUBLICATION ---------- */
 
 function analyserBrouillon(appel, comp) {
   const c = comp || {};
 
+  const refOk = Boolean(String(appel.reference || "").trim());
   const dateOk = Boolean(appel.dateLimiteDepot) && new Date(appel.dateLimiteDepot) > new Date();
-  const categorieOk = Boolean(appel.categorieMarche);
-  const montantOk = appel.typeMarche !== "FOURNITURE" || Number(appel.montantEstime) > 0;
-
   const piecesConnues = typeof c.pieces === "number";
   const piecesOk = piecesConnues && c.pieces > 0;
 
-  const criteresConnus = typeof c.criteres === "number" && typeof c.total === "number";
-  const criteresOk = criteresConnus && c.criteres > 0 && Math.abs(c.total - 100) < 0.01;
-
   const verifs = [
-    [categorieOk, "Catégorie renseignée"],
-    [
-      montantOk,
-      appel.typeMarche === "FOURNITURE" ? "Montant estimé renseigné" : "Montant non requis (service)",
-    ],
+    [refOk, refOk ? "Référence renseignée" : "Référence manquante : modifiez le dossier"],
     [dateOk, dateOk ? "Date limite dans le futur" : "Date limite dépassée : modifiez le dossier"],
     [
       piecesOk,
@@ -146,16 +120,6 @@ function analyserBrouillon(appel, comp) {
         : piecesOk
           ? `${c.pieces} pièce(s) requise(s)`
           : "Aucune pièce requise : modifiez le dossier",
-    ],
-    [
-      criteresOk,
-      !criteresConnus
-        ? "Critères d'évaluation : vérification impossible"
-        : c.criteres === 0
-          ? "Aucun critère d'évaluation : modifiez le dossier"
-          : criteresOk
-            ? `${c.criteres} critère(s) — total 100 %`
-            : `Total des critères : ${c.total.toFixed(2)} % (100 % attendu)`,
     ],
   ];
 
@@ -321,23 +285,21 @@ const EXTRA_CSS = `
 .rx-btn-add:hover:not(:disabled){background:#e6efff}
 .rx-btn-add:disabled{opacity:.5;cursor:not-allowed}
 .rx-builder-list{display:grid;gap:12px}
-.rx-builder-empty{font-size:13.5px;color:#b45309;background:#fef3c7;border-radius:10px;padding:10px 14px;margin:0 0 12px}
 .rx-builder-item{display:flex;gap:12px;align-items:flex-start;padding:14px;border:1px solid var(--rx-line);border-radius:12px;background:var(--rx-soft-bg)}
 .rx-builder-number{flex:none;width:28px;height:28px;border-radius:50%;background:#1768e5;color:#fff;font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center;margin-top:4px}
 .rx-builder-fields{flex:1;display:grid;gap:10px;min-width:0}
-.rx-builder-fields label,.rx-criterion-item label{display:grid;gap:5px;font-size:12.5px;font-weight:600;color:var(--rx-soft)}
-.rx-builder-fields input:not([type=checkbox]),.rx-criterion-item input,.rx-criterion-item select{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(--rx-line);border-radius:9px;background:var(--rx-card);color:var(--rx-text);font:inherit;font-weight:400;font-size:14px}
+.rx-builder-fields label{display:grid;gap:5px;font-size:12.5px;font-weight:600;color:var(--rx-soft)}
+.rx-builder-fields input:not([type=checkbox]){width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(--rx-line);border-radius:9px;background:var(--rx-card);color:var(--rx-text);font:inherit;font-weight:400;font-size:14px}
 .rx-required-check{display:flex!important;align-items:center;gap:8px;font-weight:500!important;color:var(--rx-text)!important}
 .rx-remove-item{flex:none;background:transparent;border:1px solid #fecaca;color:#ef4444;border-radius:9px;width:36px;height:36px;display:flex;align-items:center;justify-content:center;cursor:pointer;align-self:center}
 .rx-remove-item:hover{background:#fee2e2}
-.rx-criterion-item{display:grid;grid-template-columns:1fr 150px auto;gap:12px;align-items:end;padding:14px;border:1px solid var(--rx-line);border-radius:12px;background:var(--rx-soft-bg)}
-.rx-criterion-item .rx-remove-item{align-self:end}
-.rx-criterion-desc{grid-column:1/-1;font-size:12.5px;color:var(--rx-soft);margin:-4px 0 0}
-.rx-weight-total{margin-top:14px;padding:10px 14px;border-radius:10px;font-size:14px;display:flex;justify-content:space-between;align-items:center;gap:10px}
-.rx-weight-total.ok{background:#d1fae5;color:#065f46}
-.rx-weight-total.ko{background:#fef3c7;color:#92400e}
 .rx-brand-image{width:48px;height:48px;object-fit:contain;display:block}
-@media(max-width:640px){.rx-criterion-item{grid-template-columns:1fr}.rx-criterion-item .rx-remove-item{width:100%}}
+.rx-photo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:12px;margin-top:6px}
+.rx-photo-item{position:relative;aspect-ratio:1;border-radius:12px;overflow:hidden;border:1px solid var(--rx-line);background:var(--rx-soft-bg)}
+.rx-photo-item img{width:100%;height:100%;object-fit:cover;display:block}
+.rx-photo-item button{position:absolute;top:6px;right:6px;width:28px;height:28px;border-radius:50%;border:0;background:rgba(0,0,0,.65);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.rx-photo-item button:hover:not(:disabled){background:#ef4444}
+.rx-photo-name{position:absolute;left:0;right:0;bottom:0;padding:4px 8px;font-size:11px;color:#fff;background:linear-gradient(transparent,rgba(0,0,0,.7));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rx-detail-block{margin-top:18px}
 .rx-detail-block h4{margin:0 0 10px;font-size:15px;display:flex;align-items:center;gap:8px;color:var(--rx-text)}
 .rx-detail-list{list-style:none;margin:0;padding:0;display:grid;gap:8px}
@@ -345,7 +307,6 @@ const EXTRA_CSS = `
 .rx-detail-list small{display:block;color:var(--rx-soft);margin-top:2px}
 .rx-tag{flex:none;font-size:11.5px;font-weight:700;border-radius:99px;padding:2px 10px;background:#dbeafe;color:#1d4ed8}
 .rx-tag.opt{background:#e5e7eb;color:#4b5563}
-.rx-field-readonly{background:var(--rx-soft-bg)!important;color:var(--rx-soft)!important;cursor:not-allowed}
 `;
 
 /* ---------- PAGE RESPONSABLE ---------- */
@@ -355,12 +316,11 @@ export default function ResponsablePage() {
 
   const [user, setUser] = useState(null);
   const [appels, setAppels] = useState([]);
-  const [categories, setCategories] = useState([]);
-  const [criteresDisponibles, setCriteresDisponibles] = useState([]);
   const [completude, setCompletude] = useState({});
 
   const [piecesForm, setPiecesForm] = useState([{ ...PIECE_VIDE }]);
-  const [criteresForm, setCriteresForm] = useState([]);
+  const [photosForm, setPhotosForm] = useState([]);
+  const fileInputRef = useRef(null);
   const [editReady, setEditReady] = useState(true);
 
   const [loading, setLoading] = useState(true);
@@ -382,12 +342,11 @@ export default function ResponsablePage() {
 
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
-  const [filterType, setFilterType] = useState("");
 
   const [modalOpen, setModalOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
   const [selectedAppel, setSelectedAppel] = useState(null);
-  const [detailData, setDetailData] = useState({ loading: false, pieces: [], criteres: [], error: "" });
+  const [detailData, setDetailData] = useState({ loading: false, pieces: [], error: "" });
 
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
@@ -400,11 +359,14 @@ export default function ResponsablePage() {
   /* ----- API ----- */
 
   const apiFetch = useCallback(async (path, options = {}) => {
+    const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
+
     const response = await fetch(`${API_URL}${path}`, {
       ...options,
       credentials: "include",
       headers: {
-        "Content-Type": "application/json",
+        // Pour un FormData, le navigateur définit lui-même le Content-Type (avec le boundary).
+        ...(isFormData ? {} : { "Content-Type": "application/json" }),
         ...(options.headers || {}),
       },
     });
@@ -448,11 +410,6 @@ export default function ResponsablePage() {
     return Array.isArray(data) ? data : [];
   }, [apiFetch]);
 
-  const chargerTousLesLiens = useCallback(async () => {
-    const data = await apiFetch("/api/appel-offre-criteres");
-    return Array.isArray(data) ? data : [];
-  }, [apiFetch]);
-
   const chargerDonnees = useCallback(async (initial = false) => {
     if (initial) setLoading(true);
     else setRefreshing(true);
@@ -469,55 +426,22 @@ export default function ResponsablePage() {
 
       setUser(session);
 
-      const [appelsData, categoriesData, criteresData] = await Promise.all([
-        apiFetch("/api/appel-offres"),
-        apiFetch("/api/categories-marches"),
-        apiFetch("/api/criteres-evaluation").catch(() => []),
-      ]);
-
+      const appelsData = await apiFetch("/api/appel-offres");
       const liste = Array.isArray(appelsData) ? appelsData : [];
       setAppels(liste);
-
-      setCategories(
-        (Array.isArray(categoriesData) ? categoriesData : []).filter(
-          (c) => String(c.statut || "").toUpperCase() === "ACTIF"
-        )
-      );
-
-      setCriteresDisponibles(Array.isArray(criteresData) ? criteresData : []);
 
       const brouillons = liste.filter((a) => a.statut === "BROUILLON");
       const comp = {};
 
-      if (brouillons.length) {
-        let tousLiens = null;
-
-        try {
-          tousLiens = await chargerTousLesLiens();
-        } catch {
-          tousLiens = null;
-        }
-
-        await Promise.all(
-          brouillons.map(async (a) => {
-            let nbPieces = null;
-
-            try {
-              nbPieces = (await chargerPieces(a.idAppelOffre)).length;
-            } catch {
-              nbPieces = null;
-            }
-
-            const liens = tousLiens ? filtrerLiens(tousLiens, a.idAppelOffre) : null;
-
-            comp[a.idAppelOffre] = {
-              pieces: nbPieces,
-              criteres: liens ? liens.length : null,
-              total: liens ? sommePonderations(liens) : null,
-            };
-          })
-        );
-      }
+      await Promise.all(
+        brouillons.map(async (a) => {
+          try {
+            comp[a.idAppelOffre] = { pieces: (await chargerPieces(a.idAppelOffre)).length };
+          } catch {
+            comp[a.idAppelOffre] = { pieces: null };
+          }
+        })
+      );
 
       setCompletude(comp);
     } catch (err) {
@@ -527,7 +451,7 @@ export default function ResponsablePage() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [apiFetch, router, chargerPieces, chargerTousLesLiens]);
+  }, [apiFetch, router, chargerPieces]);
 
   useEffect(() => {
     chargerDonnees(true);
@@ -624,11 +548,11 @@ export default function ResponsablePage() {
     return mois;
   }, [appels, maintenant]);
 
-  const parCategorie = useMemo(() => {
+  const parLieu = useMemo(() => {
     const map = {};
 
     appels.forEach((a) => {
-      const n = getCategoryName(a.categorieMarche);
+      const n = (a.lieuExecution || "").trim() || "Non renseigné";
       map[n] = (map[n] || 0) + 1;
     });
 
@@ -638,11 +562,6 @@ export default function ResponsablePage() {
       .slice(0, 6);
   }, [appels]);
 
-  const parType = useMemo(() => [
-    { label: "Fournitures", value: appels.filter((a) => a.typeMarche === "FOURNITURE").length, color: "#0ea5e9" },
-    { label: "Services", value: appels.filter((a) => a.typeMarche === "SERVICE").length, color: "#8b5cf6" },
-  ], [appels]);
-
   const filteredAppels = useMemo(
     () =>
       appels.filter((a) => {
@@ -650,11 +569,10 @@ export default function ResponsablePage() {
 
         return (
           (!search || texte.includes(search.toLowerCase())) &&
-          (!filterStatus || a.statut === filterStatus) &&
-          (!filterType || a.typeMarche === filterType)
+          (!filterStatus || a.statut === filterStatus)
         );
       }),
-    [appels, search, filterStatus, filterType]
+    [appels, search, filterStatus]
   );
 
   const derniersAppels = useMemo(
@@ -665,11 +583,6 @@ export default function ResponsablePage() {
   const aPublier = useMemo(() => appels.filter((a) => a.statut === "BROUILLON"), [appels]);
   const dejaPublies = useMemo(() => appels.filter((a) => a.statut === "PUBLIE"), [appels]);
 
-  const nomCritereDuLien = (lien) =>
-    lien.nomCritere ||
-    criteresDisponibles.find((c) => Number(c.idCritere) === Number(lien.idCritere))?.nomCritere ||
-    "Critère";
-
   /* ----- FORMULAIRE ----- */
 
   const modifierChamp = (e) => {
@@ -677,11 +590,56 @@ export default function ResponsablePage() {
     setForm((p) => ({ ...p, [name]: value }));
   };
 
+  const viderPhotos = (liste) => {
+    liste.forEach((p) => URL.revokeObjectURL(p.preview));
+    setPhotosForm([]);
+  };
+
+  const choisirPhotos = (e) => {
+    const fichiers = Array.from(e.target.files || []);
+    e.target.value = ""; // permet de re-sélectionner le même fichier
+
+    const erreurs = [];
+    const valides = [];
+
+    for (const f of fichiers) {
+      if (!f.type.startsWith("image/")) {
+        erreurs.push(`« ${f.name} » n'est pas une image.`);
+      } else if (f.size > MAX_PHOTO_SIZE) {
+        erreurs.push(`« ${f.name} » dépasse 5 Mo.`);
+      } else {
+        valides.push({
+          id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          file: f,
+          preview: URL.createObjectURL(f),
+        });
+      }
+    }
+
+    const place = Math.max(MAX_PHOTOS - photosForm.length, 0);
+
+    if (valides.length > place) {
+      valides.slice(place).forEach((p) => URL.revokeObjectURL(p.preview));
+      erreurs.push(`Maximum ${MAX_PHOTOS} photos par appel d'offres.`);
+    }
+
+    setPhotosForm((prev) => [...prev, ...valides.slice(0, place)]);
+    setModalError(erreurs.join(" "));
+  };
+
+  const retirerPhoto = (id) => {
+    setPhotosForm((prev) => {
+      const cible = prev.find((p) => p.id === id);
+      if (cible) URL.revokeObjectURL(cible.preview);
+      return prev.filter((p) => p.id !== id);
+    });
+  };
+
   const ouvrirCreation = () => {
     setEditingId(null);
     setForm(EMPTY_FORM);
     setPiecesForm([{ ...PIECE_VIDE }]);
-    setCriteresForm([]);
+    viderPhotos(photosForm);
     setEditReady(true);
     setModalError("");
     setModalOpen(true);
@@ -694,24 +652,18 @@ export default function ResponsablePage() {
       reference: appel.reference || "",
       objet: appel.objet || "",
       description: appel.description || "",
-      typeMarche: appel.typeMarche || "FOURNITURE",
-      montantEstime: appel.montantEstime ?? "",
       lieuExecution: appel.lieuExecution || "",
       dateLimiteDepot: getDateInputValue(appel.dateLimiteDepot),
-      idCategorie: String(getCategoryId(appel.categorieMarche) || ""),
     });
 
     setPiecesForm([{ ...PIECE_VIDE }]);
-    setCriteresForm([]);
+    viderPhotos(photosForm);
     setModalError("");
     setEditReady(false);
     setModalOpen(true);
 
     try {
-      const [pieces, tousLiens] = await Promise.all([
-        chargerPieces(appel.idAppelOffre),
-        chargerTousLesLiens(),
-      ]);
+      const pieces = await chargerPieces(appel.idAppelOffre);
 
       setPiecesForm(
         pieces.length
@@ -724,17 +676,10 @@ export default function ResponsablePage() {
           : [{ ...PIECE_VIDE }]
       );
 
-      setCriteresForm(
-        filtrerLiens(tousLiens, appel.idAppelOffre).map((l) => ({
-          idCritere: String(l.idCritere || ""),
-          ponderation: l.ponderation ?? "",
-        }))
-      );
-
       setEditReady(true);
     } catch (err) {
       setModalError(
-        "Impossible de charger les pièces et critères existants (" +
+        "Impossible de charger les pièces existantes (" +
         err.message +
         "). Fermez la fenêtre puis réessayez : l'enregistrement est bloqué pour éviter de perdre des données."
       );
@@ -753,40 +698,6 @@ export default function ResponsablePage() {
     setPiecesForm((p) => (p.length === 1 ? [{ ...PIECE_VIDE }] : p.filter((_, i) => i !== index)));
   };
 
-  const ajouterCritereForm = () => {
-    setCriteresForm((p) => [...p, { idCritere: "", ponderation: "" }]);
-  };
-
-  const supprimerCritereForm = (index) => {
-    setCriteresForm((p) => p.filter((_, i) => i !== index));
-  };
-
-  const modifierPonderationForm = (index, valeur) => {
-    setCriteresForm((p) => p.map((c, i) => (i === index ? { ...c, ponderation: valeur } : c)));
-  };
-
-  const choisirCritereForm = (index, idCritere) => {
-    const ref = criteresDisponibles.find((c) => String(c.idCritere) === String(idCritere));
-
-    setCriteresForm((p) =>
-      p.map((c, i) =>
-        i === index
-          ? {
-              ...c,
-              idCritere,
-              ponderation:
-                c.ponderation === "" && ref?.ponderation != null ? ref.ponderation : c.ponderation,
-            }
-          : c
-      )
-    );
-  };
-
-  const totalPonderations = useMemo(
-    () => criteresForm.reduce((sum, c) => sum + (Number(c.ponderation) || 0), 0),
-    [criteresForm]
-  );
-
   const fermerModal = () => {
     if (saving) return;
 
@@ -794,7 +705,7 @@ export default function ResponsablePage() {
     setEditingId(null);
     setForm(EMPTY_FORM);
     setPiecesForm([{ ...PIECE_VIDE }]);
-    setCriteresForm([]);
+    viderPhotos(photosForm);
     setEditReady(true);
     setModalError("");
   };
@@ -804,12 +715,12 @@ export default function ResponsablePage() {
 
     if (!editReady) return;
 
-    if (!form.objet.trim()) {
-      return setModalError("Veuillez renseigner l'objet de l'appel d'offres.");
+    if (!form.reference.trim()) {
+      return setModalError("Veuillez renseigner la référence de l'appel d'offres.");
     }
 
-    if (!form.idCategorie) {
-      return setModalError("Veuillez sélectionner une catégorie.");
+    if (!form.objet.trim()) {
+      return setModalError("Veuillez renseigner l'objet de l'appel d'offres.");
     }
 
     if (!form.dateLimiteDepot) {
@@ -820,56 +731,28 @@ export default function ResponsablePage() {
       return setModalError("La date limite de dépôt doit être dans le futur.");
     }
 
-    if (form.typeMarche === "FOURNITURE" && (!form.montantEstime || Number(form.montantEstime) <= 0)) {
-      return setModalError("Le montant estimé est obligatoire pour une fourniture.");
-    }
-
     const piecesValides = piecesForm.filter((p) => p.nomPiece.trim());
 
     if (piecesForm.length > 1 && piecesForm.some((p) => !p.nomPiece.trim())) {
       return setModalError("Veuillez compléter ou supprimer chaque pièce requise vide.");
     }
 
-    if (criteresForm.some((c) => !c.idCritere)) {
-      return setModalError(
-        "Veuillez sélectionner un critère pour chaque ligne ou supprimer la ligne vide."
-      );
-    }
-
-    if (
-      criteresForm.some(
-        (c) => !c.ponderation || Number(c.ponderation) <= 0 || Number(c.ponderation) > 100
-      )
-    ) {
-      return setModalError("Chaque critère doit avoir une pondération comprise entre 0 et 100.");
-    }
-
-    if (new Set(criteresForm.map((c) => c.idCritere)).size !== criteresForm.length) {
-      return setModalError("Un même critère ne peut pas être ajouté deux fois.");
-    }
-
-    if (criteresForm.length && Math.abs(totalPonderations - 100) > 0.01) {
-      return setModalError("La somme des pondérations des critères doit être égale à 100 %.");
-    }
-
     setSaving(true);
     setModalError("");
 
-    // La référence est générée par le serveur : elle n'est pas envoyée.
+    const reference = form.reference.trim();
+
     const payload = {
+      reference,
       objet: form.objet.trim(),
       description: form.description.trim(),
-      typeMarche: form.typeMarche,
-      montantEstime: form.typeMarche === "FOURNITURE" ? Number(form.montantEstime) : null,
       lieuExecution: form.lieuExecution.trim(),
       dateLimiteDepot:
         form.dateLimiteDepot.length === 16 ? form.dateLimiteDepot + ":00" : form.dateLimiteDepot,
-      categorieMarche: { idCategorie: Number(form.idCategorie) },
     };
 
     let idAppel = editingId;
     let creation = false;
-    let reference = form.reference;
 
     try {
       if (editingId) {
@@ -884,7 +767,6 @@ export default function ResponsablePage() {
         });
 
         idAppel = cree?.idAppelOffre;
-        reference = cree?.reference || "";
         creation = true;
       }
 
@@ -892,18 +774,11 @@ export default function ResponsablePage() {
         throw new Error("Le serveur n'a pas retourné l'identifiant de l'appel d'offres.");
       }
 
-      // Remplacer les pièces et critères existants par ceux du formulaire
-      const [anciennesPieces, tousLiens] = await Promise.all([
-        chargerPieces(idAppel),
-        chargerTousLesLiens(),
-      ]);
+      // Remplacer les pièces existantes par celles du formulaire
+      const anciennesPieces = await chargerPieces(idAppel);
 
       for (const p of anciennesPieces) {
         await apiFetch(`/api/pieces-requises/${p.idPiece}`, { method: "DELETE" });
-      }
-
-      for (const l of filtrerLiens(tousLiens, idAppel)) {
-        await apiFetch(`/api/appel-offre-criteres/${l.idAppelOffreCritere}`, { method: "DELETE" });
       }
 
       for (const piece of piecesValides) {
@@ -917,38 +792,35 @@ export default function ResponsablePage() {
         });
       }
 
-      // Le backend attend un corps à plat : { idAppelOffre, idCritere, ponderation }
-      for (const critere of criteresForm) {
-        await apiFetch("/api/appel-offre-criteres", {
-          method: "POST",
-          body: JSON.stringify({
-            idAppelOffre: Number(idAppel),
-            idCritere: Number(critere.idCritere),
-            ponderation: Number(critere.ponderation),
-          }),
-        });
+      // Envoi des photos une par une (celles déjà envoyées sont retirées de la liste)
+      for (const photo of photosForm) {
+        const fd = new FormData();
+        fd.append("file", photo.file);
+
+        await apiFetch(`/api/appel-offres/${idAppel}/photos`, { method: "POST", body: fd });
+
+        URL.revokeObjectURL(photo.preview);
+        setPhotosForm((prev) => prev.filter((p) => p.id !== photo.id));
       }
 
       setSuccessMessage(
         editingId
-          ? "Appel d'offres, pièces et critères modifiés avec succès."
-          : `Appel d'offres ${reference} créé avec ses pièces et critères (statut Brouillon).`
+          ? "Appel d'offres modifié avec succès."
+          : `Appel d'offres ${reference} créé (statut Brouillon).`
       );
 
       setModalOpen(false);
       setForm(EMPTY_FORM);
       setPiecesForm([{ ...PIECE_VIDE }]);
-      setCriteresForm([]);
       setEditingId(null);
 
       await chargerDonnees(false);
     } catch (err) {
       if (idAppel && creation) {
         setEditingId(idAppel);
-        setForm((p) => ({ ...p, reference }));
 
         setModalError(
-          `L'appel d'offres ${reference} a été créé en brouillon, mais l'enregistrement des pièces/critères a échoué : ${err.message}. Cliquez de nouveau sur « Enregistrer » pour réessayer.`
+          `L'appel d'offres ${reference} a été créé en brouillon, mais la suite de l'enregistrement (pièces/photos) a échoué : ${err.message}. Cliquez de nouveau sur « Enregistrer » pour réessayer.`
         );
 
         chargerDonnees(false);
@@ -967,34 +839,18 @@ export default function ResponsablePage() {
   };
 
   const controlerPublication = async (appel) => {
+    if (!String(appel.reference || "").trim()) {
+      return "La référence est obligatoire : modifiez le dossier avant de publier.";
+    }
+
     if (!appel.dateLimiteDepot || new Date(appel.dateLimiteDepot) <= new Date()) {
       return "La date limite de dépôt est dépassée : modifiez le dossier avant de publier.";
-    }
-
-    if (!appel.categorieMarche) {
-      return "La catégorie du marché est obligatoire.";
-    }
-
-    if (appel.typeMarche === "FOURNITURE" && !(Number(appel.montantEstime) > 0)) {
-      return "Le montant estimé est obligatoire pour une fourniture.";
     }
 
     const pieces = await chargerPieces(appel.idAppelOffre);
 
     if (!pieces.length) {
       return "Ajoutez au moins une pièce requise avant de publier (bouton Modifier).";
-    }
-
-    const liens = filtrerLiens(await chargerTousLesLiens(), appel.idAppelOffre);
-
-    if (!liens.length) {
-      return "Ajoutez au moins un critère d'évaluation avant de publier (bouton Modifier).";
-    }
-
-    const total = sommePonderations(liens);
-
-    if (Math.abs(total - 100) > 0.01) {
-      return `La somme des pondérations des critères est de ${total.toFixed(2)} % : elle doit être égale à 100 %.`;
     }
 
     return "";
@@ -1077,7 +933,7 @@ export default function ResponsablePage() {
 
     demanderConfirmation({
       title: "Supprimer ce brouillon ?",
-      message: `« ${appel.objet} » sera supprimé définitivement avec ses pièces requises et ses critères.`,
+      message: `« ${appel.objet} » sera supprimé définitivement avec ses pièces requises.`,
       confirmLabel: "Supprimer",
       danger: true,
 
@@ -1086,17 +942,10 @@ export default function ResponsablePage() {
         setBusyId(appel.idAppelOffre);
 
         try {
-          const [pieces, tousLiens] = await Promise.all([
-            chargerPieces(appel.idAppelOffre),
-            chargerTousLesLiens(),
-          ]);
+          const pieces = await chargerPieces(appel.idAppelOffre);
 
           for (const p of pieces) {
             await apiFetch(`/api/pieces-requises/${p.idPiece}`, { method: "DELETE" });
-          }
-
-          for (const l of filtrerLiens(tousLiens, appel.idAppelOffre)) {
-            await apiFetch(`/api/appel-offre-criteres/${l.idAppelOffreCritere}`, { method: "DELETE" });
           }
 
           await apiFetch(`/api/appel-offres/${appel.idAppelOffre}`, { method: "DELETE" });
@@ -1142,22 +991,13 @@ export default function ResponsablePage() {
   const afficherDetail = async (appel) => {
     setSelectedAppel(appel);
     setDetailOpen(true);
-    setDetailData({ loading: true, pieces: [], criteres: [], error: "" });
+    setDetailData({ loading: true, pieces: [], error: "" });
 
     try {
-      const [pieces, tousLiens] = await Promise.all([
-        chargerPieces(appel.idAppelOffre),
-        chargerTousLesLiens(),
-      ]);
-
-      setDetailData({
-        loading: false,
-        pieces,
-        criteres: filtrerLiens(tousLiens, appel.idAppelOffre),
-        error: "",
-      });
+      const pieces = await chargerPieces(appel.idAppelOffre);
+      setDetailData({ loading: false, pieces, error: "" });
     } catch (err) {
-      setDetailData({ loading: false, pieces: [], criteres: [], error: err.message });
+      setDetailData({ loading: false, pieces: [], error: err.message });
     }
   };
 
@@ -1173,12 +1013,10 @@ export default function ResponsablePage() {
 
   const exporterCSV = () => {
     const lignes = [
-      ["Référence", "Objet", "Type", "Catégorie", "Statut", "Date limite", "Lieu"],
+      ["Référence", "Objet", "Statut", "Date limite", "Lieu"],
       ...filteredAppels.map((a) => [
         a.reference || "",
         a.objet || "",
-        a.typeMarche || "",
-        getCategoryName(a.categorieMarche),
         getStatusLabel(a.statut),
         formatDate(a.dateLimiteDepot),
         a.lieuExecution || "",
@@ -1577,14 +1415,14 @@ export default function ResponsablePage() {
                 <div className="resp-panel-header">
                   <div>
                     <h3>
-                      <FolderKanban size={19} />
-                      Appels par catégorie
+                      <Building2 size={19} />
+                      Appels par lieu
                     </h3>
-                    <p>Les catégories les plus utilisées</p>
+                    <p>Lieux d'exécution les plus fréquents</p>
                   </div>
                 </div>
 
-                <BarList data={parCategorie} emptyText="Aucune donnée disponible." />
+                <BarList data={parLieu} emptyText="Aucune donnée disponible." />
               </div>
 
               <div className="resp-panel resp-summary-panel">
@@ -1598,9 +1436,7 @@ export default function ResponsablePage() {
                   </div>
                 </div>
 
-                <BarList data={parType} emptyText="" />
-
-                <div className="resp-summary-list" style={{ marginTop: 18 }}>
+                <div className="resp-summary-list">
                   <div className="resp-summary-item">
                     <div className="resp-summary-icon green-bg">
                       <CheckCircle2 size={20} />
@@ -1670,8 +1506,6 @@ export default function ResponsablePage() {
                     <tr>
                       <th>Référence</th>
                       <th>Objet</th>
-                      <th>Type</th>
-                      <th>Catégorie</th>
                       <th>Statut</th>
                       <th>Date limite</th>
                       <th>Actions</th>
@@ -1683,14 +1517,6 @@ export default function ResponsablePage() {
                       <tr key={appel.idAppelOffre}>
                         <td className="resp-reference">{appel.reference || `AO-${appel.idAppelOffre}`}</td>
                         <td className="resp-object-cell">{appel.objet}</td>
-
-                        <td>
-                          <span className={`resp-type-badge ${appel.typeMarche?.toLowerCase()}`}>
-                            {appel.typeMarche}
-                          </span>
-                        </td>
-
-                        <td>{getCategoryName(appel.categorieMarche)}</td>
 
                         <td>
                           <span className={`resp-status ${getStatusClass(appel.statut)}`}>
@@ -1721,7 +1547,7 @@ export default function ResponsablePage() {
 
                     {derniersAppels.length === 0 && (
                       <tr>
-                        <td colSpan="7" className="resp-empty-table">
+                        <td colSpan="5" className="resp-empty-table">
                           Aucun appel d'offres enregistré.
                         </td>
                       </tr>
@@ -1774,14 +1600,6 @@ export default function ResponsablePage() {
                 </select>
               </div>
 
-              <div className="resp-select-filter">
-                <select value={filterType} onChange={(e) => setFilterType(e.target.value)}>
-                  <option value="">Tous les types</option>
-                  <option value="FOURNITURE">Fourniture</option>
-                  <option value="SERVICE">Service</option>
-                </select>
-              </div>
-
               <button className="resp-export-button" onClick={exporterCSV}>
                 <Download size={17} />
                 Exporter
@@ -1807,9 +1625,6 @@ export default function ResponsablePage() {
                     <tr>
                       <th>Référence</th>
                       <th>Objet</th>
-                      <th>Type</th>
-                      <th>Catégorie</th>
-                      <th>Montant estimé</th>
                       <th>Date limite</th>
                       <th>Statut</th>
                       <th>Actions</th>
@@ -1826,14 +1641,6 @@ export default function ResponsablePage() {
                           <span>{appel.lieuExecution || "Lieu non renseigné"}</span>
                         </td>
 
-                        <td>
-                          <span className={`resp-type-badge ${appel.typeMarche?.toLowerCase()}`}>
-                            {appel.typeMarche}
-                          </span>
-                        </td>
-
-                        <td>{getCategoryName(appel.categorieMarche)}</td>
-                        <td>{formatMontant(appel.montantEstime)}</td>
                         <td>{formatDate(appel.dateLimiteDepot)}</td>
 
                         <td>
@@ -1848,7 +1655,7 @@ export default function ResponsablePage() {
 
                     {filteredAppels.length === 0 && (
                       <tr>
-                        <td colSpan="8" className="resp-empty-table">
+                        <td colSpan="5" className="resp-empty-table">
                           Aucun résultat trouvé.
                         </td>
                       </tr>
@@ -1925,18 +1732,8 @@ export default function ResponsablePage() {
 
                     <div className="rx-pub-meta">
                       <div>
-                        <span>Type</span>
-                        <strong>{appel.typeMarche === "SERVICE" ? "Service" : "Fourniture"}</strong>
-                      </div>
-
-                      <div>
-                        <span>Catégorie</span>
-                        <strong>{getCategoryName(appel.categorieMarche)}</strong>
-                      </div>
-
-                      <div>
-                        <span>Montant estimé</span>
-                        <strong>{formatMontant(appel.montantEstime)}</strong>
+                        <span>Lieu</span>
+                        <strong>{appel.lieuExecution || "Non renseigné"}</strong>
                       </div>
 
                       <div>
@@ -2027,11 +1824,6 @@ export default function ResponsablePage() {
                     </div>
 
                     <div>
-                      <span>Catégorie</span>
-                      <strong>{getCategoryName(appel.categorieMarche)}</strong>
-                    </div>
-
-                    <div>
                       <span>Lieu</span>
                       <strong>{appel.lieuExecution || "Non renseigné"}</strong>
                     </div>
@@ -2070,44 +1862,6 @@ export default function ResponsablePage() {
                 <div className="rx-empty">
                   <Megaphone size={34} />
                   <p>Aucun appel d'offres n'est publié pour le moment.</p>
-                </div>
-              )}
-            </div>
-          </section>
-        )}
-
-        {/* CATÉGORIES */}
-
-        {activeMenu === "categories" && (
-          <section className="resp-content">
-            <div className="resp-page-intro">
-              <div>
-                <h2>Catégories des marchés</h2>
-                <p>Catégories actives configurées par l'administrateur.</p>
-              </div>
-            </div>
-
-            <div className="resp-category-grid">
-              {categories.map((categorie) => (
-                <div className="resp-category-card" key={getCategoryId(categorie)}>
-                  <div className="resp-category-icon">
-                    <FolderKanban size={25} />
-                  </div>
-
-                  <div>
-                    <h3>{getCategoryName(categorie)}</h3>
-                    <p>{categorie.description || "Aucune description disponible."}</p>
-                  </div>
-
-                  <span className="resp-category-active">Active</span>
-                </div>
-              ))}
-
-              {categories.length === 0 && (
-                <div className="resp-empty-categories">
-                  <FolderKanban size={35} />
-                  <h3>Aucune catégorie active</h3>
-                  <p>Veuillez contacter l'administrateur pour configurer les catégories.</p>
                 </div>
               )}
             </div>
@@ -2219,7 +1973,7 @@ export default function ResponsablePage() {
                 <h2>{editingId ? "Modifier l'appel d'offres" : "Nouvel appel d'offres"}</h2>
 
                 <p>
-                  Objet, pièces requises, critères d'évaluation et date limite de dépôt.
+                  Référence, objet, pièces requises, photos et date limite de dépôt.
                 </p>
               </div>
 
@@ -2238,22 +1992,16 @@ export default function ResponsablePage() {
 
               <div className="resp-form-grid">
                 <div className="resp-form-group full">
-                  <label>Référence</label>
+                  <label>Référence *</label>
 
                   <input
-                    className="rx-field-readonly"
-                    value={
-                      editingId && form.reference
-                        ? form.reference
-                        : "Générée automatiquement à l'enregistrement"
-                    }
-                    readOnly
-                    disabled
+                    name="reference"
+                    value={form.reference}
+                    onChange={modifierChamp}
+                    placeholder="Exemple : AO-2026-001"
+                    maxLength={50}
+                    required
                   />
-
-                  <p className="rx-field-hint">
-                    Format AO-AAAAMMJJ-XXXXXXXX, attribuée par le serveur.
-                  </p>
                 </div>
 
                 <div className="resp-form-group full">
@@ -2282,46 +2030,6 @@ export default function ResponsablePage() {
                 </div>
 
                 <div className="resp-form-group">
-                  <label>Type de marché *</label>
-
-                  <select name="typeMarche" value={form.typeMarche} onChange={modifierChamp} required>
-                    <option value="FOURNITURE">Fourniture</option>
-                    <option value="SERVICE">Service</option>
-                  </select>
-                </div>
-
-                <div className="resp-form-group">
-                  <label>Catégorie du marché *</label>
-
-                  <select name="idCategorie" value={form.idCategorie} onChange={modifierChamp} required>
-                    <option value="">Sélectionner une catégorie</option>
-
-                    {categories.map((c) => (
-                      <option key={getCategoryId(c)} value={getCategoryId(c)}>
-                        {getCategoryName(c)}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {form.typeMarche === "FOURNITURE" && (
-                  <div className="resp-form-group">
-                    <label>Montant estimé (Ar) *</label>
-
-                    <input
-                      type="number"
-                      name="montantEstime"
-                      value={form.montantEstime}
-                      onChange={modifierChamp}
-                      min="1"
-                      step="0.01"
-                      placeholder="Exemple : 50000000"
-                      required
-                    />
-                  </div>
-                )}
-
-                <div className="resp-form-group">
                   <label>Date limite de dépôt *</label>
 
                   <input
@@ -2333,7 +2041,7 @@ export default function ResponsablePage() {
                   />
                 </div>
 
-                <div className="resp-form-group full">
+                <div className="resp-form-group">
                   <label>Lieu d'exécution</label>
 
                   <input
@@ -2416,104 +2124,60 @@ export default function ResponsablePage() {
                 </div>
               </section>
 
-              {/* CRITÈRES D'ÉVALUATION */}
+              {/* PHOTOS */}
 
               <section className="rx-builder-section">
                 <div className="rx-builder-heading">
                   <div>
                     <h3>
-                      <ChartNoAxesCombined size={19} />
-                      Critères d'évaluation
+                      <ImagePlus size={19} />
+                      Photos
                     </h3>
 
                     <p>
-                      Choisissez parmi la grille d'évaluation définie par l'administrateur. Le total doit faire 100 %.
+                      Choisissez des images depuis votre ordinateur (max {MAX_PHOTOS}, 5 Mo chacune).
                     </p>
                   </div>
 
                   <button
                     type="button"
                     className="rx-btn-add"
-                    onClick={ajouterCritereForm}
-                    disabled={criteresDisponibles.length === 0}
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={photosForm.length >= MAX_PHOTOS || saving}
                   >
                     <Plus size={16} />
-                    Ajouter un critère
+                    Choisir des photos
                   </button>
+
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    hidden
+                    onChange={choisirPhotos}
+                  />
                 </div>
 
-                {criteresDisponibles.length === 0 && (
-                  <p className="rx-builder-empty">
-                    Aucun critère disponible. L'administrateur doit d'abord créer la grille d'évaluation.
-                  </p>
-                )}
-
-                <div className="rx-builder-list">
-                  {criteresForm.map((critere, index) => {
-                    const ref = criteresDisponibles.find(
-                      (c) => String(c.idCritere) === String(critere.idCritere)
-                    );
-
-                    const dejaChoisis = criteresForm
-                      .filter((_, i) => i !== index)
-                      .map((c) => String(c.idCritere));
-
-                    return (
-                      <div className="rx-criterion-item" key={`critere-${index}`}>
-                        <label>
-                          Critère
-
-                          <select
-                            value={critere.idCritere}
-                            onChange={(e) => choisirCritereForm(index, e.target.value)}
-                          >
-                            <option value="">Sélectionner un critère</option>
-
-                            {criteresDisponibles.map((c) => (
-                              <option
-                                key={c.idCritere}
-                                value={c.idCritere}
-                                disabled={dejaChoisis.includes(String(c.idCritere))}
-                              >
-                                {c.nomCritere}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-
-                        <label>
-                          Pondération (%)
-
-                          <input
-                            type="number"
-                            min="0.01"
-                            max="100"
-                            step="0.01"
-                            value={critere.ponderation}
-                            onChange={(e) => modifierPonderationForm(index, e.target.value)}
-                            placeholder="Ex. : 40"
-                          />
-                        </label>
+                {photosForm.length === 0 ? (
+                  <p className="rx-field-hint">Aucune photo sélectionnée.</p>
+                ) : (
+                  <div className="rx-photo-grid">
+                    {photosForm.map((p) => (
+                      <div className="rx-photo-item" key={p.id}>
+                        <img src={p.preview} alt={p.file.name} />
+                        <span className="rx-photo-name">{p.file.name}</span>
 
                         <button
                           type="button"
-                          className="rx-remove-item"
-                          onClick={() => supprimerCritereForm(index)}
-                          title="Retirer ce critère"
+                          onClick={() => retirerPhoto(p.id)}
+                          title="Retirer cette photo"
+                          disabled={saving}
                         >
-                          <Trash2 size={17} />
+                          <X size={14} />
                         </button>
-
-                        {ref?.description && <p className="rx-criterion-desc">{ref.description}</p>}
                       </div>
-                    );
-                  })}
-                </div>
-
-                {criteresForm.length > 0 && (
-                  <div className={`rx-weight-total ${Math.abs(totalPonderations - 100) < 0.01 ? "ok" : "ko"}`}>
-                    <span>Total des pondérations</span>
-                    <strong>{totalPonderations.toFixed(2)} % / 100 %</strong>
+                    ))}
                   </div>
                 )}
               </section>
@@ -2521,9 +2185,8 @@ export default function ResponsablePage() {
               <div className="resp-form-note">
                 <AlertTriangle size={16} />
 
-                La référence est générée automatiquement. Le dossier est enregistré au statut Brouillon ;
-                pour être publié (et diffusé sur Facebook), il doit contenir au moins une pièce requise et
-                des critères dont le total fait 100 %.
+                Le dossier est enregistré au statut Brouillon ; pour être publié (et diffusé sur Facebook),
+                il doit contenir une référence, une date limite future et au moins une pièce requise.
               </div>
 
               <div className="resp-modal-actions">
@@ -2583,26 +2246,12 @@ export default function ResponsablePage() {
               <span className={`resp-status ${getStatusClass(selectedAppel.statut)}`}>
                 {getStatusLabel(selectedAppel.statut)}
               </span>
-
-              <span className={`resp-type-badge ${selectedAppel.typeMarche?.toLowerCase()}`}>
-                {selectedAppel.typeMarche}
-              </span>
             </div>
 
             <div className="resp-detail-grid">
               <div className="resp-detail-item">
                 <span>Référence</span>
                 <strong>{selectedAppel.reference || "—"}</strong>
-              </div>
-
-              <div className="resp-detail-item">
-                <span>Catégorie</span>
-                <strong>{getCategoryName(selectedAppel.categorieMarche)}</strong>
-              </div>
-
-              <div className="resp-detail-item">
-                <span>Montant estimé</span>
-                <strong>{formatMontant(selectedAppel.montantEstime)}</strong>
               </div>
 
               <div className="resp-detail-item">
@@ -2650,28 +2299,6 @@ export default function ResponsablePage() {
                       <span className={`rx-tag ${p.obligatoire === false ? "opt" : ""}`}>
                         {p.obligatoire === false ? "Facultatif" : "Obligatoire"}
                       </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-
-            <div className="rx-detail-block">
-              <h4>
-                <ChartNoAxesCombined size={17} />
-                Critères d'évaluation
-              </h4>
-
-              {detailData.loading ? (
-                <p className="rx-muted">Chargement...</p>
-              ) : detailData.error ? null : detailData.criteres.length === 0 ? (
-                <p className="rx-muted">Aucun critère d'évaluation défini.</p>
-              ) : (
-                <ul className="rx-detail-list">
-                  {detailData.criteres.map((l) => (
-                    <li key={l.idAppelOffreCritere}>
-                      <div>{nomCritereDuLien(l)}</div>
-                      <span className="rx-tag">{Number(l.ponderation)} %</span>
                     </li>
                   ))}
                 </ul>

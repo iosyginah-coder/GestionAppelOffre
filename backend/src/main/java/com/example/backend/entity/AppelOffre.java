@@ -1,10 +1,8 @@
-
 package com.example.backend.entity;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Entity
@@ -28,6 +26,7 @@ public class AppelOffre {
     @Column(name = "id_appel_offre")
     private Long idAppelOffre;
 
+    // Référence saisie manuellement par le responsable (unique)
     @Column(name = "reference", nullable = false, length = 50)
     private String reference;
 
@@ -36,12 +35,6 @@ public class AppelOffre {
 
     @Column(name = "description", columnDefinition = "text")
     private String description;
-
-    @Column(name = "type_marche", length = 50)
-    private String typeMarche;
-
-    @Column(name = "montant_estime", precision = 15, scale = 2)
-    private BigDecimal montantEstime;
 
     @Column(name = "lieu_execution", length = 255)
     private String lieuExecution;
@@ -54,14 +47,6 @@ public class AppelOffre {
 
     @Column(name = "date_limite_depot", nullable = false)
     private LocalDateTime dateLimiteDepot;
-
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "id_categorie")
-    @JsonIgnoreProperties({
-            "hibernateLazyInitializer",
-            "handler"
-    })
-    private CategorieMarche categorieMarche;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "id_utilisateur", nullable = false)
@@ -107,22 +92,6 @@ public class AppelOffre {
         this.description = description;
     }
 
-    public String getTypeMarche() {
-        return typeMarche;
-    }
-
-    public void setTypeMarche(String typeMarche) {
-        this.typeMarche = typeMarche;
-    }
-
-    public BigDecimal getMontantEstime() {
-        return montantEstime;
-    }
-
-    public void setMontantEstime(BigDecimal montantEstime) {
-        this.montantEstime = montantEstime;
-    }
-
     public String getLieuExecution() {
         return lieuExecution;
     }
@@ -153,14 +122,6 @@ public class AppelOffre {
 
     public void setDateLimiteDepot(LocalDateTime dateLimiteDepot) {
         this.dateLimiteDepot = dateLimiteDepot;
-    }
-
-    public CategorieMarche getCategorieMarche() {
-        return categorieMarche;
-    }
-
-    public void setCategorieMarche(CategorieMarche categorieMarche) {
-        this.categorieMarche = categorieMarche;
     }
 
     public Utilisateur getUtilisateur() {
