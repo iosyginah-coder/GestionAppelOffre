@@ -1,3 +1,4 @@
+
 package com.example.backend.service;
 
 import com.example.backend.entity.AppelOffre;
@@ -26,15 +27,13 @@ import java.util.UUID;
 public class PhotoAppelOffreService {
 
     public static final int MAX_PHOTOS = 10;
-    public static final long TAILLE_MAX = 5L * 1024 * 1024; // 5 Mo
+    public static final long TAILLE_MAX = 5L * 1024 * 1024;
 
-    /** Fichier prêt à être renvoyé au navigateur. */
     public record FichierPhoto(
             Resource ressource,
             String typeContenu,
             String nomFichier
-    ) {
-    }
+    ) {}
 
     private final PhotoAppelOffreRepository photoRepository;
     private final AppelOffreRepository appelOffreRepository;
@@ -43,16 +42,32 @@ public class PhotoAppelOffreService {
     public PhotoAppelOffreService(
             PhotoAppelOffreRepository photoRepository,
             AppelOffreRepository appelOffreRepository,
-            @Value("${app.upload.dir:uploads}") String dossier
+            @Value("${app.upload.dir:uploads/offres}") String dossier
     ) {
         this.photoRepository = photoRepository;
         this.appelOffreRepository = appelOffreRepository;
+
         this.dossierUpload = Paths.get(dossier)
                 .toAbsolutePath()
                 .normalize();
+
+        try {
+            Files.createDirectories(this.dossierUpload);
+        } catch (IOException e) {
+            throw new IllegalStateException(
+                    "Impossible de créer le dossier des photos : "
+                            + this.dossierUpload,
+                    e
+            );
+        }
+
+        System.out.println("Dossier des photos SPAT : " + this.dossierUpload);
     }
 
-    private ResponseStatusException erreur(HttpStatus statut, String message) {
+    private ResponseStatusException erreur(
+            HttpStatus statut,
+            String message
+    ) {
         return new ResponseStatusException(statut, message);
     }
 
@@ -78,12 +93,14 @@ public class PhotoAppelOffreService {
     }
 
     // =====================================================
-    // LISTE
+    // LISTE DES PHOTOS
     // =====================================================
 
     @Transactional(readOnly = true)
-    public List<PhotoAppelOffre> lister(Long idAppel, boolean publicSeulement) {
-
+    public List<PhotoAppelOffre> lister(
+            Long idAppel,
+            boolean publicSeulement
+    ) {
         AppelOffre appel = trouverAppel(idAppel);
 
         if (publicSeulement
@@ -99,11 +116,13 @@ public class PhotoAppelOffreService {
     }
 
     // =====================================================
-    // AJOUT
+    // AJOUT D'UNE PHOTO
     // =====================================================
 
-    public PhotoAppelOffre ajouter(Long idAppel, MultipartFile fichier) {
-
+    public PhotoAppelOffre ajouter(
+            Long idAppel,
+            MultipartFile fichier
+    ) {
         AppelOffre appel = trouverAppel(idAppel);
         verifierBrouillon(appel);
 
@@ -137,7 +156,6 @@ public class PhotoAppelOffreService {
             );
         }
 
-        // Le type est déterminé par le contenu réel, pas par le nom du fichier.
         String type = detecterType(octets);
 
         if (type == null) {
@@ -156,9 +174,8 @@ public class PhotoAppelOffreService {
 
         Path cible = dossier.resolve(stocke).normalize();
 
-        if (!dossier.startsWith(dossierUpload) || !cible.startsWith(dossier)) {
-            throw erreur(HttpStatus.BAD_REQUEST, "Chemin de stockage invalide.");
-        }
+        verifierChemin(dossier);
+        verifierChemin(cible);
 
         try {
             Files.createDirectories(dossier);
@@ -186,11 +203,10 @@ public class PhotoAppelOffreService {
     }
 
     // =====================================================
-    // SUPPRESSION
+    // SUPPRESSION D'UNE PHOTO
     // =====================================================
 
     public void supprimer(Long idAppel, Long idPhoto) {
-
         AppelOffre appel = trouverAppel(idAppel);
         verifierBrouillon(appel);
 
@@ -209,9 +225,11 @@ public class PhotoAppelOffreService {
         supprimerFichier(chemin);
     }
 
-    // Appelée à la suppression d'un brouillon
-    public void supprimerToutes(Long idAppel) {
+    // =====================================================
+    // SUPPRESSION DE TOUTES LES PHOTOS
+    // =====================================================
 
+    public void supprimerToutes(Long idAppel) {
         List<PhotoAppelOffre> photos = photoRepository
                 .findByAppelOffre_IdAppelOffreOrderByIdPhotoAsc(idAppel);
 
@@ -224,24 +242,28 @@ public class PhotoAppelOffreService {
 
         chemins.forEach(this::supprimerFichier);
 
+        Path dossier = dossierUpload
+                .resolve("appels")
+                .resolve(String.valueOf(idAppel))
+                .normalize();
+
         try {
-            Files.deleteIfExists(
-                    dossierUpload.resolve("appels")
-                            .resolve(String.valueOf(idAppel))
-                            .normalize()
-            );
+            verifierChemin(dossier);
+            Files.deleteIfExists(dossier);
         } catch (IOException ignored) {
-            // Dossier non vide ou déjà supprimé : sans importance
+            // Le dossier peut contenir d'autres fichiers.
         }
     }
 
     // =====================================================
-    // LECTURE DU FICHIER
+    // OBTENIR UNE PHOTO POUR LE NAVIGATEUR
     // =====================================================
 
     @Transactional(readOnly = true)
-    public FichierPhoto obtenirFichier(Long idPhoto, boolean publicSeulement) {
-
+    public FichierPhoto obtenirFichier(
+            Long idPhoto,
+            boolean publicSeulement
+    ) {
         if (idPhoto == null || idPhoto <= 0) {
             throw erreur(HttpStatus.BAD_REQUEST, "Identifiant invalide.");
         }
@@ -258,9 +280,9 @@ public class PhotoAppelOffreService {
             throw erreur(HttpStatus.NOT_FOUND, "Photo introuvable.");
         }
 
-        Path chemin = dossierUpload.resolve(photo.getChemin()).normalize();
+        Path chemin = resoudreChemin(photo.getChemin());
 
-        if (!chemin.startsWith(dossierUpload) || !Files.isRegularFile(chemin)) {
+        if (!Files.isRegularFile(chemin)) {
             throw erreur(HttpStatus.NOT_FOUND, "Fichier introuvable.");
         }
 
@@ -272,16 +294,34 @@ public class PhotoAppelOffreService {
     }
 
     // =====================================================
-    // LECTURE DU CONTENU (utilisée pour l'envoi à Facebook)
+    // LECTURE POUR FACEBOOK
     // =====================================================
 
     @Transactional(readOnly = true)
     public byte[] lireOctets(PhotoAppelOffre photo) {
 
-        Path chemin = dossierUpload.resolve(photo.getChemin()).normalize();
+        if (photo == null || photo.getChemin() == null) {
+            throw erreur(
+                    HttpStatus.NOT_FOUND,
+                    "Informations de la photo manquantes."
+            );
+        }
 
-        if (!chemin.startsWith(dossierUpload) || !Files.isRegularFile(chemin)) {
-            throw erreur(HttpStatus.NOT_FOUND, "Fichier introuvable.");
+        Path chemin = resoudreChemin(photo.getChemin());
+
+        System.out.println("========== PHOTO FACEBOOK ==========");
+        System.out.println("Dossier upload : " + dossierUpload);
+        System.out.println("Nom original   : " + photo.getNomFichier());
+        System.out.println("Chemin BDD     : " + photo.getChemin());
+        System.out.println("Chemin complet : " + chemin);
+        System.out.println("Fichier existe : " + Files.isRegularFile(chemin));
+        System.out.println("====================================");
+
+        if (!Files.isRegularFile(chemin)) {
+            throw erreur(
+                    HttpStatus.NOT_FOUND,
+                    "Photo introuvable sur le serveur : " + chemin
+            );
         }
 
         try {
@@ -295,20 +335,46 @@ public class PhotoAppelOffreService {
     }
 
     // =====================================================
-    // OUTILS
+    // RESOLUTION ET SECURISATION DU CHEMIN
+    // =====================================================
+
+    private Path resoudreChemin(String cheminRelatif) {
+
+        if (cheminRelatif == null || cheminRelatif.isBlank()) {
+            throw erreur(HttpStatus.NOT_FOUND, "Chemin de photo manquant.");
+        }
+
+        Path chemin = dossierUpload
+                .resolve(cheminRelatif)
+                .normalize();
+
+        verifierChemin(chemin);
+
+        return chemin;
+    }
+
+    private void verifierChemin(Path chemin) {
+        if (!chemin.toAbsolutePath().normalize().startsWith(dossierUpload)) {
+            throw erreur(HttpStatus.BAD_REQUEST, "Chemin de stockage invalide.");
+        }
+    }
+
+    // =====================================================
+    // SUPPRESSION PHYSIQUE
     // =====================================================
 
     private void supprimerFichier(String cheminRelatif) {
         try {
-            Path chemin = dossierUpload.resolve(cheminRelatif).normalize();
-
-            if (chemin.startsWith(dossierUpload)) {
-                Files.deleteIfExists(chemin);
-            }
-        } catch (IOException ignored) {
-            // Une erreur de nettoyage ne doit pas bloquer l'opération
+            Path chemin = resoudreChemin(cheminRelatif);
+            Files.deleteIfExists(chemin);
+        } catch (IOException | ResponseStatusException ignored) {
+            // Le nettoyage ne doit pas bloquer la suppression en base.
         }
     }
+
+    // =====================================================
+    // DETECTION DU FORMAT IMAGE
+    // =====================================================
 
     private static String detecterType(byte[] b) {
 
@@ -328,14 +394,18 @@ public class PhotoAppelOffreService {
         }
 
         if (b.length >= 6
-                && b[0] == 'G' && b[1] == 'I' && b[2] == 'F' && b[3] == '8'
-                && (b[4] == '7' || b[4] == '9') && b[5] == 'a') {
+                && b[0] == 'G' && b[1] == 'I' && b[2] == 'F'
+                && b[3] == '8'
+                && (b[4] == '7' || b[4] == '9')
+                && b[5] == 'a') {
             return "image/gif";
         }
 
         if (b.length >= 12
-                && b[0] == 'R' && b[1] == 'I' && b[2] == 'F' && b[3] == 'F'
-                && b[8] == 'W' && b[9] == 'E' && b[10] == 'B' && b[11] == 'P') {
+                && b[0] == 'R' && b[1] == 'I'
+                && b[2] == 'F' && b[3] == 'F'
+                && b[8] == 'W' && b[9] == 'E'
+                && b[10] == 'B' && b[11] == 'P') {
             return "image/webp";
         }
 
@@ -365,6 +435,8 @@ public class PhotoAppelOffreService {
             return "photo";
         }
 
-        return nom.length() > 255 ? nom.substring(0, 255) : nom;
+        return nom.length() > 255
+                ? nom.substring(0, 255)
+                : nom;
     }
 }

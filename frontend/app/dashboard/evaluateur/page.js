@@ -143,7 +143,7 @@ function getIdNote(item) {
 }
 
 function getIdDocument(item) {
-  return item?.idDocument ?? item?.id_document ?? item?.id;
+  return item?.idPieceDepot ?? item?.id_piece_depot ?? item?.idDocument ?? item?.id_document ?? item?.id;
 }
 
 function formatDate(value) {
@@ -223,6 +223,8 @@ function getNomSoumissionnaire(offre) {
     offre?.soumissionnaire?.nomComplet ??
     offre?.soumissionnaire?.nom_complet ??
     offre?.nomSoumissionnaire ??
+    offre?.entreprise ??
+    offre?.nomExterne ??
     "Soumissionnaire"
   );
 }
@@ -707,7 +709,7 @@ export default function EvaluateurPage() {
       const [documentsData, notesData] =
         await Promise.all([
           apiRequest(
-            `/api/documents-offre/offre/${offreId}`
+            `/api/offres/${offreId}/pieces`
           ),
           apiRequest(`/api/notes/offre/${offreId}`),
         ]);
@@ -813,7 +815,7 @@ export default function EvaluateurPage() {
 
     try {
       const response = await fetch(
-        `${API_BASE}/api/documents-offre/${documentId}/telecharger`,
+        `${API_BASE}/api/offres/pieces/${documentId}/telecharger`,
         { credentials: "include" }
       );
 

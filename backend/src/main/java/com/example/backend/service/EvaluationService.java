@@ -26,7 +26,7 @@ import java.util.stream.Collectors;
 public class EvaluationService {
 
     private final OffreRepository offreRepository;
-    private final DocumentOffreRepository documentRepository;
+    private final PieceDepotRepository pieceDepotRepository;
     private final NoterRepository noterRepository;
     private final AppelOffreCritereRepository appelOffreCritereRepository;
     private final UtilisateurRepository utilisateurRepository;
@@ -36,13 +36,13 @@ public class EvaluationService {
 
     public EvaluationService(
             OffreRepository offreRepository,
-            DocumentOffreRepository documentRepository,
+            PieceDepotRepository pieceDepotRepository,
             NoterRepository noterRepository,
             AppelOffreCritereRepository appelOffreCritereRepository,
             UtilisateurRepository utilisateurRepository
     ) {
         this.offreRepository = offreRepository;
-        this.documentRepository = documentRepository;
+        this.pieceDepotRepository = pieceDepotRepository;
         this.noterRepository = noterRepository;
         this.appelOffreCritereRepository = appelOffreCritereRepository;
         this.utilisateurRepository = utilisateurRepository;
@@ -59,7 +59,8 @@ public class EvaluationService {
 
         if (authentication == null
                 || !authentication.isAuthenticated()
-                || authentication.getName() == null) {
+                || authentication.getName() == null
+                || "anonymousUser".equals(authentication.getName())) {
 
             throw new ResponseStatusException(
                     HttpStatus.UNAUTHORIZED,
@@ -132,7 +133,7 @@ public class EvaluationService {
                         )
                 )
                 .map(this::convertirOffre)
-                .toList();
+                .collect(Collectors.toList());
     }
 
     private OffreEvaluationDto convertirOffre(Offre offre) {
@@ -140,7 +141,6 @@ public class EvaluationService {
         OffreEvaluationDto dto = new OffreEvaluationDto();
 
         dto.setIdOffre(offre.getIdOffre());
-        dto.setMontant(offre.getMontant());
         dto.setAccuseDeReception(offre.getAccuseDeReception());
         dto.setStatut(offre.getStatut());
 
@@ -170,6 +170,12 @@ public class EvaluationService {
             );
         }
 
+        // Informations du soumissionnaire externe
+        dto.setNomExterne(offre.getNomSoumissionnaire());
+        dto.setEntreprise(offre.getEntreprise());
+        dto.setEmail(offre.getEmailSoumissionnaire());
+        dto.setTelephone(offre.getTelephoneSoumissionnaire());
+
         return dto;
     }
 
@@ -189,24 +195,22 @@ public class EvaluationService {
                         )
                 );
 
-        return documentRepository
-                .findByOffre_IdOffreOrderByIdDocumentAsc(
+        return pieceDepotRepository
+                .findByOffre_IdOffreOrderByIdPieceDepotAsc(
                         offre.getIdOffre()
                 )
                 .stream()
                 .map(this::convertirDocument)
-                .toList();
+                .collect(Collectors.toList());
     }
 
-    private DocumentDto convertirDocument(
-            DocumentOffre document
-    ) {
+    private DocumentDto convertirDocument(PieceDepot document) {
 
         DocumentDto dto = new DocumentDto();
 
-        dto.setIdDocument(document.getIdDocument());
-        dto.setTypeDocument(document.getTypeDocument());
+        dto.setIdDocument(document.getIdPieceDepot());
         dto.setNomFichier(document.getNomFichier());
+        dto.setTypeDocument(document.getTypeContenu());
 
         if (document.getOffre() != null) {
             dto.setIdOffre(
@@ -218,6 +222,10 @@ public class EvaluationService {
             dto.setIdPiece(
                     document.getPieceRequise().getIdPiece()
             );
+
+            dto.setNomPiece(
+                    document.getPieceRequise().getNomPiece()
+            );
         }
 
         return dto;
@@ -227,14 +235,12 @@ public class EvaluationService {
     // TELECHARGEMENT D'UN DOCUMENT
     // =====================================================
 
-    public FichierTelechargement telechargerDocument(
-            Long documentId
-    ) {
+    public FichierTelechargement telechargerDocument(Long documentId) {
 
         evaluateurConnecte();
 
-        DocumentOffre document =
-                documentRepository.findById(documentId)
+        PieceDepot document =
+                pieceDepotRepository.findById(documentId)
                         .orElseThrow(() ->
                                 new ResponseStatusException(
                                         HttpStatus.NOT_FOUND,
@@ -242,8 +248,8 @@ public class EvaluationService {
                                 )
                         );
 
-        if (document.getChemin() == null
-                || document.getChemin().isBlank()) {
+        if (document.getCheminFichier() == null
+                || document.getCheminFichier().isBlank()) {
 
             throw new ResponseStatusException(
                     HttpStatus.NOT_FOUND,
@@ -257,7 +263,7 @@ public class EvaluationService {
                     .toAbsolutePath()
                     .normalize();
 
-            Path fichier = base.resolve(document.getChemin())
+            Path fichier = base.resolve(document.getCheminFichier())
                     .normalize();
 
             if (!fichier.startsWith(base)) {
@@ -285,10 +291,7 @@ public class EvaluationService {
                 nom = fichier.getFileName().toString();
             }
 
-            return new FichierTelechargement(
-                    nom,
-                    contenu
-            );
+            return new FichierTelechargement(nom, contenu);
 
         } catch (IOException e) {
 
@@ -319,7 +322,7 @@ public class EvaluationService {
                 .findByOffre_IdOffreOrderByIdNoterAsc(offreId)
                 .stream()
                 .map(this::convertirNote)
-                .toList();
+                .collect(Collectors.toList());
     }
 
     private NoteDto convertirNote(Noter noter) {
@@ -373,14 +376,13 @@ public class EvaluationService {
             );
         }
 
-        Offre offre = offreRepository.findById(
-                request.getIdOffre()
-        ).orElseThrow(() ->
-                new ResponseStatusException(
-                        HttpStatus.NOT_FOUND,
-                        "Offre introuvable."
-                )
-        );
+        Offre offre = offreRepository.findById(request.getIdOffre())
+                .orElseThrow(() ->
+                        new ResponseStatusException(
+                                HttpStatus.NOT_FOUND,
+                                "Offre introuvable."
+                        )
+                );
 
         if (offre.getAppelOffre() == null) {
 
@@ -393,8 +395,7 @@ public class EvaluationService {
         List<AppelOffreCritere> criteres =
                 appelOffreCritereRepository
                         .findByAppelOffre_IdAppelOffre(
-                                offre.getAppelOffre()
-                                        .getIdAppelOffre()
+                                offre.getAppelOffre().getIdAppelOffre()
                         );
 
         if (criteres.isEmpty()) {
@@ -407,9 +408,11 @@ public class EvaluationService {
 
         Map<Long, AppelOffreCritere> criteresAutorises =
                 criteres.stream()
+                        .filter(c -> c.getCritere() != null)
                         .collect(Collectors.toMap(
                                 c -> c.getCritere().getIdCritere(),
-                                c -> c
+                                c -> c,
+                                (ancien, nouveau) -> ancien
                         ));
 
         Set<Long> idsRecus = new HashSet<>();
@@ -444,9 +447,10 @@ public class EvaluationService {
                 );
             }
 
-            if (noteRequest.getNote() == null
-                    || noteRequest.getNote().compareTo(BigDecimal.ZERO) < 0
-                    || noteRequest.getNote().compareTo(new BigDecimal("20")) > 0) {
+            if (noteRequest.getNote().compareTo(BigDecimal.ZERO) < 0
+                    || noteRequest.getNote().compareTo(
+                    new BigDecimal("20")
+            ) > 0) {
 
                 throw new ResponseStatusException(
                         HttpStatus.BAD_REQUEST,
@@ -483,9 +487,7 @@ public class EvaluationService {
                     )
             );
 
-            noter.setCommentaire(
-                    noteRequest.getCommentaire()
-            );
+            noter.setCommentaire(noteRequest.getCommentaire());
 
             noterRepository.save(noter);
         }
@@ -508,7 +510,6 @@ public class EvaluationService {
                         .stream()
                         .allMatch(criteresNotes::contains);
 
-        // CORRECTION : ton entité Offre utilise String statut
         offre.setStatut(
                 evaluationComplete
                         ? "EVALUEE"
@@ -520,31 +521,21 @@ public class EvaluationService {
         EvaluationResultatDto resultat =
                 new EvaluationResultatDto();
 
-        resultat.setMessage(
-                "Évaluation enregistrée avec succès."
-        );
-
+        resultat.setMessage("Évaluation enregistrée avec succès.");
         resultat.setIdOffre(offre.getIdOffre());
-
-        resultat.setNombreNotesEnregistrees(
-                request.getNotes().size()
-        );
-
-        resultat.setEvaluationComplete(
-                evaluationComplete
-        );
+        resultat.setNombreNotesEnregistrees(request.getNotes().size());
+        resultat.setEvaluationComplete(evaluationComplete);
 
         return resultat;
     }
 
     // =====================================================
-    // DTO OFFRE
+    // DTO OFFRE - SANS MONTANT
     // =====================================================
 
     public static class OffreEvaluationDto {
 
         private Long idOffre;
-        private BigDecimal montant;
         private String accuseDeReception;
         private String statut;
         private Long idAppelOffre;
@@ -552,12 +543,13 @@ public class EvaluationService {
         private String objetAppelOffre;
         private String nomSoumissionnaire;
         private String matriculeSoumissionnaire;
+        private String nomExterne;
+        private String entreprise;
+        private String email;
+        private String telephone;
 
         public Long getIdOffre() { return idOffre; }
         public void setIdOffre(Long v) { idOffre = v; }
-
-        public BigDecimal getMontant() { return montant; }
-        public void setMontant(BigDecimal v) { montant = v; }
 
         public String getAccuseDeReception() { return accuseDeReception; }
         public void setAccuseDeReception(String v) { accuseDeReception = v; }
@@ -579,6 +571,18 @@ public class EvaluationService {
 
         public String getMatriculeSoumissionnaire() { return matriculeSoumissionnaire; }
         public void setMatriculeSoumissionnaire(String v) { matriculeSoumissionnaire = v; }
+
+        public String getNomExterne() { return nomExterne; }
+        public void setNomExterne(String v) { nomExterne = v; }
+
+        public String getEntreprise() { return entreprise; }
+        public void setEntreprise(String v) { entreprise = v; }
+
+        public String getEmail() { return email; }
+        public void setEmail(String v) { email = v; }
+
+        public String getTelephone() { return telephone; }
+        public void setTelephone(String v) { telephone = v; }
     }
 
     // =====================================================
@@ -592,6 +596,7 @@ public class EvaluationService {
         private String nomFichier;
         private Long idOffre;
         private Long idPiece;
+        private String nomPiece;
 
         public Long getIdDocument() { return idDocument; }
         public void setIdDocument(Long v) { idDocument = v; }
@@ -607,6 +612,9 @@ public class EvaluationService {
 
         public Long getIdPiece() { return idPiece; }
         public void setIdPiece(Long v) { idPiece = v; }
+
+        public String getNomPiece() { return nomPiece; }
+        public void setNomPiece(String v) { nomPiece = v; }
     }
 
     // =====================================================

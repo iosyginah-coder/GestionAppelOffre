@@ -7,6 +7,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
+
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -14,6 +15,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.HttpStatusEntryPoint;
+
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -22,28 +24,48 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 @EnableMethodSecurity
 public class SecurityConfig {
 
+    // =====================================================
+    // ENCODAGE MOT DE PASSE
+    // =====================================================
+
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder(12);
     }
 
+    // =====================================================
+    // CONFIGURATION SECURITY
+    // =====================================================
+
     @Bean
     public SecurityFilterChain securityFilterChain(
-            HttpSecurity http) throws Exception {
+            HttpSecurity http
+    ) throws Exception {
 
         http
-                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-
-                .csrf(csrf -> csrf.disable())
-
-                .sessionManagement(session -> session
-                        .sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED)
+                // Activation CORS
+                .cors(cors ->
+                        cors.configurationSource(corsConfigurationSource())
                 )
 
+                // Autoriser le formulaire multipart public
+                .csrf(csrf -> csrf.disable())
+
+                // Gestion des sessions
+                .sessionManagement(session ->
+                        session.sessionCreationPolicy(
+                                SessionCreationPolicy.IF_REQUIRED
+                        )
+                )
+
+                // Autorisations
                 .authorizeHttpRequests(auth -> auth
 
-                        // Autoriser les requêtes CORS
-                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                        // Autoriser les requêtes OPTIONS (préflight CORS)
+                        .requestMatchers(
+                                HttpMethod.OPTIONS,
+                                "/**"
+                        ).permitAll()
 
                         // Authentification
                         .requestMatchers(
@@ -54,7 +76,7 @@ public class SecurityConfig {
                                 "/favicon.ico"
                         ).permitAll()
 
-                        // Changement du mot de passe avec le lien reçu par e-mail
+                        // Changement du mot de passe
                         .requestMatchers(
                                 HttpMethod.POST,
                                 "/api/auth/change-password"
@@ -66,13 +88,13 @@ public class SecurityConfig {
                                 "/api/auth/password-reset-requests"
                         ).permitAll()
 
-                        // Consultation des demandes : administrateur uniquement
+                        // Consultation réservée à l'administrateur
                         .requestMatchers(
                                 HttpMethod.GET,
                                 "/api/auth/password-reset-requests"
                         ).hasRole("ADMINISTRATEUR")
 
-                        // Traitement des demandes : administrateur uniquement
+                        // Traitement réservé à l'administrateur
                         .requestMatchers(
                                 HttpMethod.PATCH,
                                 "/api/auth/password-reset-requests/**"
@@ -83,51 +105,70 @@ public class SecurityConfig {
                                 "/api/utilisateurs/**"
                         ).hasRole("ADMINISTRATEUR")
 
-                        // Dépôt public d'une offre sans connexion
+                        // =========================================
+                        // DEPOT PUBLIC DE L'OFFRE
+                        // =========================================
+
                         .requestMatchers(
                                 HttpMethod.POST,
                                 "/api/offres/deposer"
                         ).permitAll()
 
-                        // Consultation publique des appels publiés (lien Facebook)
+                        // =========================================
+                        // CONSULTATION PUBLIQUE DES APPELS D'OFFRES
+                        // =========================================
+
                         .requestMatchers(
                                 HttpMethod.GET,
                                 "/api/appel-offres/publications",
-                                "/api/appel-offres/publications/*",
-                                "/api/appel-offres/publications/*/photos",
-                                "/api/photos/public/*",
+                                "/api/appel-offres/publications/**",
+                                "/api/photos/public/**",
                                 "/api/pieces-requises/public/**"
                         ).permitAll()
 
-                        // Toutes les autres routes nécessitent une authentification
+                        // Toutes les autres routes restent protégées
                         .anyRequest().authenticated()
                 )
 
+                // Gestion des erreurs d'authentification
                 .exceptionHandling(ex -> ex
                         .authenticationEntryPoint(
-                                new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)
+                                new HttpStatusEntryPoint(
+                                        HttpStatus.UNAUTHORIZED
+                                )
                         )
                 )
 
+                // Désactivation HTTP Basic et formulaire Spring
                 .httpBasic(basic -> basic.disable())
-
                 .formLogin(form -> form.disable());
 
         return http.build();
     }
+
+    // =====================================================
+    // CONFIGURATION CORS
+    // =====================================================
 
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
 
         CorsConfiguration cors = new CorsConfiguration();
 
-        cors.setAllowedOrigins(List.of(
+        // Autoriser localhost et les domaines Ngrok
+        cors.setAllowedOriginPatterns(List.of(
                 "http://localhost:3000",
                 "http://127.0.0.1:3000",
                 "http://localhost:5173",
-                "http://127.0.0.1:5173"
+                "http://127.0.0.1:5173",
+
+                "https://feeble-vocation-plasma.ngrok-free.dev",
+                "https://*.ngrok-free.dev",
+                "https://*.ngrok-free.app",
+                "https://*.ngrok.app"
         ));
 
+        // Méthodes autorisées
         cors.setAllowedMethods(List.of(
                 "GET",
                 "POST",
@@ -137,11 +178,13 @@ public class SecurityConfig {
                 "OPTIONS"
         ));
 
+        // Autoriser les en-têtes
         cors.setAllowedHeaders(List.of("*"));
 
-        // Indispensable pour les cookies de session
+        // Autoriser les cookies de session
         cors.setAllowCredentials(true);
 
+        // Durée de validité du préflight
         cors.setMaxAge(3600L);
 
         UrlBasedCorsConfigurationSource source =

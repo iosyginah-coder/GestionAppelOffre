@@ -2,7 +2,6 @@
 package com.example.backend.entity;
 
 import jakarta.persistence.*;
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Entity
@@ -14,38 +13,69 @@ public class Offre {
     @Column(name = "id_offre")
     private Long idOffre;
 
-    @Column(name = "montant", nullable = false, precision = 15, scale = 2)
-    private BigDecimal montant;
+    // FOURNISSEUR ou PRESTATAIRE
+    @Column(name = "type_soumissionnaire", nullable = false, length = 30)
+    private String typeSoumissionnaire;
 
     @Column(name = "accuse_de_reception", nullable = false, unique = true, length = 60)
     private String accuseDeReception;
 
-    @Column(name = "date_depot", nullable = false, insertable = false, updatable = false)
+    @Column(name = "date_depot", nullable = false)
     private LocalDateTime dateDepot;
 
-    @Column(name = "statut", nullable = false, length = 20)
-    private String statut;
+    @Column(name = "statut", nullable = false, length = 30)
+    private String statut = "DEPOSEE";
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "id_appel_offre", nullable = false)
     private AppelOffre appelOffre;
 
-    // L'utilisateur est facultatif : le dépôt est public et anonyme.
+    // Dépôt public : aucun compte utilisateur obligatoire
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "id_utilisateur", nullable = true)
+    @JoinColumn(name = "id_utilisateur")
     private Utilisateur utilisateur;
 
-    @Column(name = "nom_soumissionnaire", length = 150)
-    private String nomSoumissionnaire;
-
+    // Informations fournisseur
     @Column(name = "entreprise", length = 200)
     private String entreprise;
 
+    @Column(name = "nif", length = 80)
+    private String nif;
+
+    @Column(name = "stat", length = 80)
+    private String stat;
+
+    @Column(name = "adresse_entreprise", length = 300)
+    private String adresseEntreprise;
+
+    // Informations prestataire
+    @Column(name = "nom_soumissionnaire", length = 150)
+    private String nomSoumissionnaire;
+
+    @Column(name = "adresse_soumissionnaire", length = 300)
+    private String adresseSoumissionnaire;
+
+    @Column(name = "cin_recto", length = 500)
+    private String cinRecto;
+
+    @Column(name = "cin_verso", length = 500)
+    private String cinVerso;
+
+    // Informations communes
     @Column(name = "email_soumissionnaire", length = 150)
     private String emailSoumissionnaire;
 
     @Column(name = "telephone_soumissionnaire", length = 30)
     private String telephoneSoumissionnaire;
+
+    // Offres facultatives
+    @Column(name = "offre_technique", length = 500)
+    private String offreTechnique;
+
+    @Column(name = "offre_financiere", length = 500)
+    private String offreFinanciere;
+
+    // GETTERS ET SETTERS
 
     public Long getIdOffre() {
         return idOffre;
@@ -55,12 +85,12 @@ public class Offre {
         this.idOffre = idOffre;
     }
 
-    public BigDecimal getMontant() {
-        return montant;
+    public String getTypeSoumissionnaire() {
+        return typeSoumissionnaire;
     }
 
-    public void setMontant(BigDecimal montant) {
-        this.montant = montant;
+    public void setTypeSoumissionnaire(String typeSoumissionnaire) {
+        this.typeSoumissionnaire = typeSoumissionnaire;
     }
 
     public String getAccuseDeReception() {
@@ -103,6 +133,38 @@ public class Offre {
         this.utilisateur = utilisateur;
     }
 
+    public String getEntreprise() {
+        return entreprise;
+    }
+
+    public void setEntreprise(String entreprise) {
+        this.entreprise = entreprise;
+    }
+
+    public String getNif() {
+        return nif;
+    }
+
+    public void setNif(String nif) {
+        this.nif = nif;
+    }
+
+    public String getStat() {
+        return stat;
+    }
+
+    public void setStat(String stat) {
+        this.stat = stat;
+    }
+
+    public String getAdresseEntreprise() {
+        return adresseEntreprise;
+    }
+
+    public void setAdresseEntreprise(String adresseEntreprise) {
+        this.adresseEntreprise = adresseEntreprise;
+    }
+
     public String getNomSoumissionnaire() {
         return nomSoumissionnaire;
     }
@@ -111,12 +173,28 @@ public class Offre {
         this.nomSoumissionnaire = nomSoumissionnaire;
     }
 
-    public String getEntreprise() {
-        return entreprise;
+    public String getAdresseSoumissionnaire() {
+        return adresseSoumissionnaire;
     }
 
-    public void setEntreprise(String entreprise) {
-        this.entreprise = entreprise;
+    public void setAdresseSoumissionnaire(String adresseSoumissionnaire) {
+        this.adresseSoumissionnaire = adresseSoumissionnaire;
+    }
+
+    public String getCinRecto() {
+        return cinRecto;
+    }
+
+    public void setCinRecto(String cinRecto) {
+        this.cinRecto = cinRecto;
+    }
+
+    public String getCinVerso() {
+        return cinVerso;
+    }
+
+    public void setCinVerso(String cinVerso) {
+        this.cinVerso = cinVerso;
     }
 
     public String getEmailSoumissionnaire() {
@@ -133,5 +211,21 @@ public class Offre {
 
     public void setTelephoneSoumissionnaire(String telephoneSoumissionnaire) {
         this.telephoneSoumissionnaire = telephoneSoumissionnaire;
+    }
+
+    public String getOffreTechnique() {
+        return offreTechnique;
+    }
+
+    public void setOffreTechnique(String offreTechnique) {
+        this.offreTechnique = offreTechnique;
+    }
+
+    public String getOffreFinanciere() {
+        return offreFinanciere;
+    }
+
+    public void setOffreFinanciere(String offreFinanciere) {
+        this.offreFinanciere = offreFinanciere;
     }
 }

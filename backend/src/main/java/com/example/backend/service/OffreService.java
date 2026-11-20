@@ -4,403 +4,434 @@ package com.example.backend.service;
 import com.example.backend.entity.*;
 import com.example.backend.repository.*;
 
-import jakarta.persistence.EntityManager;
-import jakarta.persistence.PersistenceContext;
-
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.math.BigDecimal;
 import java.nio.file.*;
 import java.time.LocalDateTime;
 import java.util.*;
 
 @Service
-@Transactional
 public class OffreService {
-
-    private static final long TAILLE_MAX = 10L * 1024 * 1024;
-
-    private static final Set<String> EXTENSIONS = Set.of(
-            "pdf", "doc", "docx", "xls", "xlsx",
-            "jpg", "jpeg", "png"
-    );
-
-    @PersistenceContext
-    private EntityManager em;
 
     private final OffreRepository offreRepository;
     private final AppelOffreRepository appelOffreRepository;
-    private final PieceRequiseRepository pieceRepository;
-    private final DocumentOffreRepository documentRepository;
-    private final Path dossierUpload;
+    private final PieceRequiseRepository pieceRequiseRepository;
+    private final PieceDepotRepository pieceDepotRepository;
+
+    @Value("${app.upload.dir:uploads/offres}")
+    private String uploadDir;
 
     public OffreService(
             OffreRepository offreRepository,
             AppelOffreRepository appelOffreRepository,
-            PieceRequiseRepository pieceRepository,
-            DocumentOffreRepository documentRepository,
-            @Value("${app.upload.dir:uploads}") String dossier
-    ) {
+            PieceRequiseRepository pieceRequiseRepository,
+            PieceDepotRepository pieceDepotRepository) {
+
         this.offreRepository = offreRepository;
         this.appelOffreRepository = appelOffreRepository;
-        this.pieceRepository = pieceRepository;
-        this.documentRepository = documentRepository;
-        this.dossierUpload = Paths.get(dossier)
-                .toAbsolutePath()
-                .normalize();
+        this.pieceRequiseRepository = pieceRequiseRepository;
+        this.pieceDepotRepository = pieceDepotRepository;
     }
 
-    private ResponseStatusException erreur(
-            HttpStatus statut,
-            String message
-    ) {
-        return new ResponseStatusException(statut, message);
-    }
+    // =========================================================
+    // DEPOT PUBLIC D'UNE OFFRE PAR LE SOUMISSIONNAIRE
+    // =========================================================
 
-    // =====================================================
-    // DEPOT PUBLIC D'UNE OFFRE SANS CONNEXION
-    // =====================================================
-
+    @Transactional
     public Offre deposer(
             Long idAppelOffre,
-            BigDecimal montant,
+            String typeSoumissionnaire,
             String nomSoumissionnaire,
             String entreprise,
-            String emailSoumissionnaire,
-            String telephoneSoumissionnaire,
+            String email,
+            String telephone,
+            String adresse,
+            String nif,
+            String stat,
+            MultipartFile cinRecto,
+            MultipartFile cinVerso,
+            MultipartFile offreTechnique,
+            MultipartFile offreFinanciere,
             List<Long> idsPieces,
-            List<MultipartFile> fichiers
-    ) {
+            List<MultipartFile> fichiersPieces) {
 
-        // Vérifier les informations obligatoires
         if (idAppelOffre == null) {
-            throw erreur(HttpStatus.BAD_REQUEST,
-                    "L'appel d'offres est obligatoire.");
+            throw new IllegalArgumentException(
+                    "Appel d'offres obligatoire.");
         }
 
-        if (montant == null || montant.compareTo(BigDecimal.ZERO) <= 0) {
-            throw erreur(HttpStatus.BAD_REQUEST,
-                    "Le montant proposé doit être supérieur à zéro.");
-        }
-
-        if (nomSoumissionnaire == null || nomSoumissionnaire.isBlank()) {
-            throw erreur(HttpStatus.BAD_REQUEST,
-                    "Le nom du soumissionnaire est obligatoire.");
-        }
-
-        if (entreprise == null || entreprise.isBlank()) {
-            throw erreur(HttpStatus.BAD_REQUEST,
-                    "Le nom de l'entreprise est obligatoire.");
-        }
-
-        if (emailSoumissionnaire == null
-                || !emailSoumissionnaire.matches("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")) {
-            throw erreur(HttpStatus.BAD_REQUEST,
-                    "Veuillez saisir une adresse e-mail valide.");
-        }
-
-        if (telephoneSoumissionnaire == null
-                || telephoneSoumissionnaire.isBlank()) {
-            throw erreur(HttpStatus.BAD_REQUEST,
-                    "Le numéro de téléphone est obligatoire.");
-        }
-
-        // Vérifier l'appel d'offres
-        AppelOffre appel = appelOffreRepository
-                .findById(idAppelOffre)
-                .orElseThrow(() -> erreur(
-                        HttpStatus.NOT_FOUND,
-                        "Appel d'offres introuvable."
-                ));
+        AppelOffre appel = appelOffreRepository.findById(idAppelOffre)
+                .orElseThrow(() ->
+                        new IllegalArgumentException(
+                                "Appel d'offres introuvable."));
 
         if (!"PUBLIE".equalsIgnoreCase(appel.getStatut())) {
-            throw erreur(HttpStatus.CONFLICT,
+            throw new IllegalStateException(
                     "Cet appel d'offres n'est pas ouvert aux dépôts.");
         }
 
-        if (appel.getDateLimiteDepot() == null
-                || !appel.getDateLimiteDepot().isAfter(LocalDateTime.now())) {
-            throw erreur(HttpStatus.CONFLICT,
+        if (appel.getDateLimiteDepot() == null ||
+                !LocalDateTime.now().isBefore(appel.getDateLimiteDepot())) {
+            throw new IllegalStateException(
                     "La date limite de dépôt est dépassée.");
         }
 
-        // Récupérer les pièces requises pour cet appel d'offres
-        List<PieceRequise> pieces =
-                pieceRepository.findByAppelOffre_IdAppelOffreOrderByIdPieceAsc(
-                        idAppelOffre
-                );
-
-        List<Long> ids = idsPieces == null
-                ? Collections.emptyList()
-                : idsPieces;
-
-        List<MultipartFile> fics = fichiers == null
-                ? Collections.emptyList()
-                : fichiers;
-
-        if (ids.size() != fics.size()) {
-            throw erreur(HttpStatus.BAD_REQUEST,
-                    "Les fichiers ne correspondent pas aux pièces indiquées.");
+        if (typeSoumissionnaire == null) {
+            throw new IllegalArgumentException(
+                    "Type de soumissionnaire obligatoire.");
         }
 
-        // Associer chaque pièce à son fichier
-        Map<Long, MultipartFile> parPiece = new LinkedHashMap<>();
+        typeSoumissionnaire =
+                typeSoumissionnaire.trim().toUpperCase(Locale.ROOT);
 
-        for (int i = 0; i < ids.size(); i++) {
-
-            Long idPiece = ids.get(i);
-            MultipartFile fichier = fics.get(i);
-
-            if (idPiece == null) {
-                throw erreur(HttpStatus.BAD_REQUEST,
-                        "Identifiant de pièce invalide.");
-            }
-
-            PieceRequise piece = pieces.stream()
-                    .filter(p -> p.getIdPiece().equals(idPiece))
-                    .findFirst()
-                    .orElseThrow(() -> erreur(
-                            HttpStatus.BAD_REQUEST,
-                            "Une pièce envoyée n'appartient pas à cet appel d'offres."
-                    ));
-
-            if (parPiece.containsKey(idPiece)) {
-                throw erreur(HttpStatus.BAD_REQUEST,
-                        "La pièce " + piece.getNomPiece()
-                                + " a été envoyée deux fois.");
-            }
-
-            validerFichier(fichier, piece.getNomPiece());
-            parPiece.put(idPiece, fichier);
+        if (!typeSoumissionnaire.equals("FOURNISSEUR") &&
+                !typeSoumissionnaire.equals("PRESTATAIRE")) {
+            throw new IllegalArgumentException(
+                    "Type de soumissionnaire invalide.");
         }
 
-        // Vérifier toutes les pièces obligatoires
-        for (PieceRequise piece : pieces) {
-
-            if (Boolean.TRUE.equals(piece.getObligatoire())
-                    && !parPiece.containsKey(piece.getIdPiece())) {
-
-                throw erreur(HttpStatus.BAD_REQUEST,
-                        "La pièce obligatoire "
-                                + piece.getNomPiece()
-                                + " est manquante.");
-            }
+        if (email == null || email.isBlank()) {
+            throw new IllegalArgumentException(
+                    "Adresse email obligatoire.");
         }
 
-        // Créer l'offre sans utilisateur connecté
         Offre offre = new Offre();
 
-        offre.setMontant(montant);
         offre.setAppelOffre(appel);
-        offre.setUtilisateur(null);
+        offre.setTypeSoumissionnaire(typeSoumissionnaire);
+        offre.setEmailSoumissionnaire(email.trim());
+        offre.setTelephoneSoumissionnaire(telephone);
+        offre.setDateDepot(LocalDateTime.now());
 
-        offre.setNomSoumissionnaire(nomSoumissionnaire.trim());
-        offre.setEntreprise(entreprise.trim());
-        offre.setEmailSoumissionnaire(emailSoumissionnaire.trim());
-        offre.setTelephoneSoumissionnaire(telephoneSoumissionnaire.trim());
-
+        // L'offre est immédiatement disponible pour l'évaluateur.
         offre.setStatut("DEPOSEE");
 
-        offre.setAccuseDeReception(
-                "AR-" + UUID.randomUUID()
-                        .toString()
-                        .replace("-", "")
-                        .substring(0, 12)
-                        .toUpperCase(Locale.ROOT)
-        );
+        // Informations fournisseur
+        if (typeSoumissionnaire.equals("FOURNISSEUR")) {
 
-        offre = offreRepository.saveAndFlush(offre);
-
-        // Récupérer la date générée par PostgreSQL
-        em.refresh(offre);
-
-        Path dossier = dossierUpload
-                .resolve("offres")
-                .resolve(offre.getAccuseDeReception())
-                .normalize();
-
-        if (!dossier.startsWith(dossierUpload)) {
-            throw erreur(HttpStatus.BAD_REQUEST,
-                    "Chemin de stockage invalide.");
-        }
-
-        try {
-
-            Files.createDirectories(dossier);
-
-            for (Map.Entry<Long, MultipartFile> entree
-                    : parPiece.entrySet()) {
-
-                MultipartFile fichier = entree.getValue();
-
-                PieceRequise piece = pieces.stream()
-                        .filter(p -> p.getIdPiece().equals(entree.getKey()))
-                        .findFirst()
-                        .orElseThrow(() -> erreur(
-                                HttpStatus.BAD_REQUEST,
-                                "Pièce requise introuvable."
-                        ));
-
-                String original =
-                        nettoyerNom(fichier.getOriginalFilename());
-
-                String stocke =
-                        UUID.randomUUID() + "." + extension(original);
-
-                Path cible = dossier.resolve(stocke).normalize();
-
-                if (!cible.startsWith(dossier)) {
-                    throw erreur(HttpStatus.BAD_REQUEST,
-                            "Nom de fichier invalide.");
-                }
-
-                try (InputStream in = fichier.getInputStream()) {
-                    Files.copy(
-                            in,
-                            cible,
-                            StandardCopyOption.REPLACE_EXISTING
-                    );
-                }
-
-                // Enregistrer le document lié à l'offre et à la pièce
-                DocumentOffre doc = new DocumentOffre();
-
-                doc.setOffre(offre);
-                doc.setPieceRequise(piece);
-                doc.setTypeDocument("PIECE");
-                doc.setNomFichier(original);
-                doc.setChemin(
-                        "offres/"
-                                + offre.getAccuseDeReception()
-                                + "/"
-                                + stocke
-                );
-
-                documentRepository.save(doc);
+            if (entreprise == null || entreprise.isBlank()) {
+                throw new IllegalArgumentException(
+                        "Nom de l'entreprise obligatoire.");
             }
 
-            documentRepository.flush();
+            if (adresse == null || adresse.isBlank()) {
+                throw new IllegalArgumentException(
+                        "Adresse de l'entreprise obligatoire.");
+            }
 
-        } catch (IOException e) {
+            if (nif == null || nif.isBlank() ||
+                    stat == null || stat.isBlank()) {
+                throw new IllegalArgumentException(
+                        "NIF et STAT obligatoires.");
+            }
 
-            supprimerDossier(dossier);
+            offre.setEntreprise(entreprise.trim());
+            offre.setAdresseEntreprise(adresse.trim());
+            offre.setNif(nif.trim());
+            offre.setStat(stat.trim());
 
-            throw erreur(
-                    HttpStatus.INTERNAL_SERVER_ERROR,
-                    "Impossible d'enregistrer les fichiers de l'offre."
-            );
+        } else {
 
-        } catch (RuntimeException e) {
+            // Informations prestataire
+            if (nomSoumissionnaire == null ||
+                    nomSoumissionnaire.isBlank()) {
+                throw new IllegalArgumentException(
+                        "Nom et prénom obligatoires.");
+            }
 
-            supprimerDossier(dossier);
-            throw e;
+            if (adresse == null || adresse.isBlank()) {
+                throw new IllegalArgumentException(
+                        "Adresse obligatoire.");
+            }
+
+            verifierFichierObligatoire(cinRecto, "CIN recto");
+            verifierFichierObligatoire(cinVerso, "CIN verso");
+
+            offre.setNomSoumissionnaire(nomSoumissionnaire.trim());
+            offre.setAdresseSoumissionnaire(adresse.trim());
+            offre.setCinRecto(stockerFichier(cinRecto, "cin"));
+            offre.setCinVerso(stockerFichier(cinVerso, "cin"));
+        }
+
+        // Récupération des pièces requises pour cet appel d'offres
+        List<PieceRequise> piecesAttendues =
+                pieceRequiseRepository
+                        .findByAppelOffre_IdAppelOffreOrderByIdPieceAsc(
+                                idAppelOffre);
+
+        Map<Long, MultipartFile> fichiersParPiece = new HashMap<>();
+
+        if (idsPieces != null && fichiersPieces != null) {
+
+            if (idsPieces.size() != fichiersPieces.size()) {
+                throw new IllegalArgumentException(
+                        "Chaque pièce doit correspondre à un fichier.");
+            }
+
+            for (int i = 0; i < idsPieces.size(); i++) {
+
+                Long idPiece = idsPieces.get(i);
+                MultipartFile fichier = fichiersPieces.get(i);
+
+                if (idPiece == null ||
+                        fichiersParPiece.put(idPiece, fichier) != null) {
+                    throw new IllegalArgumentException(
+                            "Pièce requise répétée ou invalide.");
+                }
+            }
+        }
+
+        Set<Long> idsAutorises = new HashSet<>();
+
+        for (PieceRequise piece : piecesAttendues) {
+
+            idsAutorises.add(piece.getIdPiece());
+
+            MultipartFile fichier =
+                    fichiersParPiece.get(piece.getIdPiece());
+
+            if (Boolean.TRUE.equals(piece.getObligatoire()) &&
+                    (fichier == null || fichier.isEmpty())) {
+                throw new IllegalArgumentException(
+                        "Pièce obligatoire manquante : "
+                                + piece.getNomPiece());
+            }
+        }
+
+        if (!idsAutorises.containsAll(fichiersParPiece.keySet())) {
+            throw new IllegalArgumentException(
+                    "Une pièce envoyée ne correspond pas à cet appel d'offres.");
+        }
+
+        // Génération de l'accusé de réception
+        String accuse = "DEP-" +
+                UUID.randomUUID().toString()
+                        .replace("-", "")
+                        .substring(0, 20)
+                        .toUpperCase(Locale.ROOT);
+
+        offre.setAccuseDeReception(accuse);
+
+        // Enregistrement de l'offre
+        offre = offreRepository.save(offre);
+
+        // Enregistrement des pièces déposées
+        for (PieceRequise piece : piecesAttendues) {
+
+            MultipartFile fichier =
+                    fichiersParPiece.get(piece.getIdPiece());
+
+            if (fichier == null || fichier.isEmpty()) {
+                continue;
+            }
+
+            PieceDepot depot = new PieceDepot();
+
+            depot.setOffre(offre);
+            depot.setPieceRequise(piece);
+            depot.setNomFichier(nomOriginal(fichier));
+            depot.setCheminFichier(stockerFichier(fichier, "pieces"));
+            depot.setTypeContenu(fichier.getContentType());
+            depot.setDateAjout(LocalDateTime.now());
+
+            pieceDepotRepository.save(depot);
+        }
+
+        // Fichiers facultatifs du fournisseur
+        if (typeSoumissionnaire.equals("FOURNISSEUR")) {
+
+            if (offreTechnique != null && !offreTechnique.isEmpty()) {
+                offre.setOffreTechnique(
+                        stockerFichier(offreTechnique, "technique"));
+            }
+
+            if (offreFinanciere != null && !offreFinanciere.isEmpty()) {
+                offre.setOffreFinanciere(
+                        stockerFichier(offreFinanciere, "financiere"));
+            }
+
+            offre = offreRepository.save(offre);
         }
 
         return offre;
     }
 
-    // =====================================================
-    // VALIDATION DES FICHIERS
-    // =====================================================
+    // =========================================================
+    // VERIFICATION DES FICHIERS
+    // =========================================================
 
-    private void validerFichier(
-            MultipartFile fichier,
-            String nomPiece
-    ) {
+    private void verifierFichierObligatoire(
+            MultipartFile fichier, String nom) {
 
         if (fichier == null || fichier.isEmpty()) {
-            throw erreur(HttpStatus.BAD_REQUEST,
-                    "Le fichier de la pièce " + nomPiece + " est vide.");
+            throw new IllegalArgumentException(nom + " obligatoire.");
         }
 
-        if (fichier.getSize() > TAILLE_MAX) {
-            throw erreur(HttpStatus.BAD_REQUEST,
-                    "Le fichier de la pièce " + nomPiece
-                            + " dépasse 10 Mo.");
-        }
-
-        String nom = nettoyerNom(fichier.getOriginalFilename());
-        String ext = extension(nom);
-
-        if (!EXTENSIONS.contains(ext)) {
-            throw erreur(HttpStatus.BAD_REQUEST,
-                    "Format non autorisé pour " + nomPiece
-                            + ". Formats acceptés : PDF, Word, Excel, JPG et PNG.");
-        }
+        verifierFichier(fichier);
     }
 
-    // =====================================================
-    // NETTOYER LE NOM DU FICHIER
-    // =====================================================
+    private String nomOriginal(MultipartFile fichier) {
 
-    private String nettoyerNom(String nom) {
+        String nom = fichier.getOriginalFilename();
 
         if (nom == null || nom.isBlank()) {
             return "document";
         }
 
-        String n = nom.replace("\\", "/");
-        n = n.substring(n.lastIndexOf('/') + 1);
+        return Paths.get(nom).getFileName().toString();
+    }
 
-        n = n.replaceAll(
-                "[^\\p{L}\\p{N} ._()\\-]",
-                "_"
-        ).trim();
+    // =========================================================
+    // STOCKAGE DES FICHIERS
+    // =========================================================
 
-        if (n.isEmpty()) {
-            n = "document";
+    private String stockerFichier(
+            MultipartFile fichier, String categorie) {
+
+        if (fichier == null || fichier.isEmpty()) {
+            return null;
         }
 
-        return n.length() > 200
-                ? n.substring(n.length() - 200)
-                : n;
-    }
-
-    // =====================================================
-    // EXTRAIRE L'EXTENSION
-    // =====================================================
-
-    private String extension(String nom) {
-
-        int i = nom.lastIndexOf('.');
-
-        return i < 0
-                ? ""
-                : nom.substring(i + 1).toLowerCase(Locale.ROOT);
-    }
-
-    // =====================================================
-    // SUPPRIMER LES FICHIERS EN CAS D'ERREUR
-    // =====================================================
-
-    private void supprimerDossier(Path dossier) {
+        verifierFichier(fichier);
 
         try {
+            Path dossier = Paths.get(uploadDir, categorie)
+                    .toAbsolutePath()
+                    .normalize();
 
-            if (Files.exists(dossier)) {
+            Files.createDirectories(dossier);
 
-                try (var flux = Files.walk(dossier)) {
+            String extension = "";
+            String original = nomOriginal(fichier);
+            int point = original.lastIndexOf('.');
 
-                    flux.sorted(Comparator.reverseOrder())
-                            .forEach(p -> {
-                                try {
-                                    Files.deleteIfExists(p);
-                                } catch (IOException ignored) {
-                                    // Ignorer une erreur de suppression isolée
-                                }
-                            });
-                }
+            if (point >= 0) {
+                extension = original.substring(point)
+                        .replaceAll("[^a-zA-Z0-9.]", "");
             }
 
-        } catch (IOException ignored) {
-            // Ignorer une erreur de nettoyage
+            String nomStocke = UUID.randomUUID() + extension;
+
+            Path destination = dossier.resolve(nomStocke).normalize();
+
+            if (!destination.startsWith(dossier)) {
+                throw new IllegalArgumentException(
+                        "Nom de fichier invalide.");
+            }
+
+            Files.copy(
+                    fichier.getInputStream(),
+                    destination,
+                    StandardCopyOption.REPLACE_EXISTING);
+
+            return categorie + "/" + nomStocke;
+
+        } catch (IOException e) {
+            throw new IllegalStateException(
+                    "Impossible d'enregistrer le fichier.", e);
         }
+    }
+
+    private void verifierFichier(MultipartFile fichier) {
+
+        if (fichier.getSize() > 10L * 1024 * 1024) {
+            throw new IllegalArgumentException(
+                    "Chaque fichier doit faire au maximum 10 Mo.");
+        }
+
+        String nom = nomOriginal(fichier).toLowerCase(Locale.ROOT);
+
+        if (!(nom.endsWith(".pdf") ||
+                nom.endsWith(".jpg") ||
+                nom.endsWith(".jpeg") ||
+                nom.endsWith(".png"))) {
+            throw new IllegalArgumentException(
+                    "Formats autorisés : PDF, JPG, JPEG et PNG.");
+        }
+    }
+
+    // =========================================================
+    // NOUVEAU : LISTE DES OFFRES POUR LES EVALUATEURS
+    // =========================================================
+
+    @Transactional(readOnly = true)
+    public List<Offre> listerOffresPourEvaluation() {
+
+        return offreRepository.findByStatutInOrderByDateDepotDesc(
+                List.of(
+                        "DEPOSEE",
+                        "EN_EVALUATION",
+                        "EVALUEE"
+                )
+        );
+    }
+
+    // =========================================================
+    // LISTE DE TOUTES LES OFFRES
+    // =========================================================
+
+    @Transactional(readOnly = true)
+    public List<Offre> listerToutesLesOffres() {
+
+        return offreRepository.findAllByOrderByDateDepotDesc();
+    }
+
+    // =========================================================
+    // LISTE DES OFFRES PAR APPEL D'OFFRES
+    // =========================================================
+
+    @Transactional(readOnly = true)
+    public List<Offre> listerParAppel(Long idAppelOffre) {
+
+        return offreRepository
+                .findByAppelOffre_IdAppelOffreOrderByDateDepotDesc(
+                        idAppelOffre);
+    }
+
+    // =========================================================
+    // LISTE DES PIECES DEPOSEES
+    // =========================================================
+
+    @Transactional(readOnly = true)
+    public List<PieceDepot> listerPieces(Long idOffre) {
+
+        return pieceDepotRepository
+                .findByOffre_IdOffreOrderByIdPieceDepotAsc(idOffre);
+    }
+
+    // =========================================================
+    // RECHERCHER UNE PIECE DEPOSEE
+    // =========================================================
+
+    @Transactional(readOnly = true)
+    public PieceDepot trouverPiece(Long idPieceDepot) {
+
+        return pieceDepotRepository.findById(idPieceDepot)
+                .orElseThrow(() ->
+                        new IllegalArgumentException("Fichier introuvable."));
+    }
+
+    // =========================================================
+    // RECUPERER LE CHEMIN D'UN FICHIER
+    // =========================================================
+
+    public Path cheminFichier(String cheminRelatif) {
+
+        Path base = Paths.get(uploadDir)
+                .toAbsolutePath()
+                .normalize();
+
+        Path chemin = base.resolve(cheminRelatif).normalize();
+
+        if (!chemin.startsWith(base)) {
+            throw new IllegalArgumentException(
+                    "Chemin de fichier invalide.");
+        }
+
+        return chemin;
     }
 }

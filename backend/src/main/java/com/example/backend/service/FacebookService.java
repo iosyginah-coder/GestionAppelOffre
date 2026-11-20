@@ -22,8 +22,9 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.util.StreamUtils;
 import org.springframework.web.client.RestClient;
-import org.springframework.web.client.RestClientResponseException;
+import org.springframework.web.client.RestClientException;
 
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -39,27 +40,6 @@ public class FacebookService {
     private final PieceRequiseRepository pieceRepository;
     private final PhotoAppelOffreService photoService;
     private final ObjectMapper objectMapper;
-
-    public record Resultat(boolean succes, String message, String idPost) {
-
-        static Resultat ok(String idPost) {
-            return new Resultat(
-                    true,
-                    "Publication Facebook effectuée avec succès.",
-                    idPost
-            );
-        }
-
-        static Resultat echec(String message) {
-            return new Resultat(false, message, null);
-        }
-    }
-
-    private static class EchecPublication extends RuntimeException {
-        EchecPublication(String message) {
-            super(message);
-        }
-    }
 
     @Value("${facebook.page-id:}")
     private String pageId;
@@ -86,8 +66,43 @@ public class FacebookService {
         this.pieceRepository = pieceRepository;
         this.photoService = photoService;
 
-        // Création directe de Jackson
+        // Création directe : aucun bean Spring nécessaire
         this.objectMapper = new ObjectMapper();
+    }
+
+    // =====================================================
+    // RESULTAT
+    // =====================================================
+
+    public record Resultat(
+            boolean succes,
+            String message,
+            String idPost,
+            String lienDepot) {
+
+        static Resultat ok(String idPost, String lienDepot) {
+            return new Resultat(
+                    true,
+                    "Publication Facebook effectuée avec succès.",
+                    idPost,
+                    lienDepot
+            );
+        }
+
+        static Resultat echec(String message) {
+            return new Resultat(false, message, null, null);
+        }
+    }
+
+    private static class EchecPublication extends RuntimeException {
+
+        EchecPublication(String message) {
+            super(message);
+        }
+
+        EchecPublication(String message, Throwable cause) {
+            super(message, cause);
+        }
     }
 
     // =====================================================
@@ -107,6 +122,7 @@ public class FacebookService {
         }
 
         if (isBlank(pageId) || isBlank(pageAccessToken)) {
+
             logger.error("Configuration Facebook incomplète.");
 
             return Resultat.echec(
@@ -114,25 +130,37 @@ public class FacebookService {
             );
         }
 
-        if (isBlank(frontendPublicUrl)
-                || !frontendPublicUrl.trim().matches("^https?://\\S+$")) {
-
-            logger.error("URL publique invalide.");
-
+        if (isBlank(graphApiVersion)) {
             return Resultat.echec(
-                    "URL publique du site invalide."
+                    "Version de l'API Facebook manquante."
             );
         }
 
+        String baseUrl = normaliserUrlFrontend(frontendPublicUrl);
+
+        if (baseUrl == null) {
+
+            logger.error(
+                    "URL publique frontend invalide : {}",
+                    frontendPublicUrl
+            );
+
+            return Resultat.echec(
+                    "URL publique du frontend invalide. Vérifiez app.frontend.public-url."
+            );
+        }
+
+        Long idAppel = appel.getIdAppelOffre();
+
+        String lienDepot = baseUrl + "/soumissionner/" + idAppel;
+
         try {
 
-            Long idAppel = appel.getIdAppelOffre();
-
-            String baseUrl = frontendPublicUrl.trim()
-                    .replaceAll("/+$", "");
-
-            String lienDepot =
-                    baseUrl + "/soumissionner/" + idAppel;
+            logger.info(
+                    "Préparation publication Facebook : référence={}, lien={}",
+                    appel.getReference(),
+                    lienDepot
+            );
 
             // 1. Récupérer les pièces requises
 
@@ -142,12 +170,16 @@ public class FacebookService {
                                     idAppel
                             );
 
-            // 2. Récupérer les photos enregistrées
+            if (pieces == null) {
+                pieces = new ArrayList<>();
+            }
+
+            // 2. Récupérer les photos
 
             List<PhotoAppelOffre> photos =
                     photoService.lister(idAppel, false);
 
-            // 3. Construire le message Facebook
+            // 3. Construire le message
 
             String message =
                     construireMessage(appel, pieces, lienDepot);
@@ -160,6 +192,10 @@ public class FacebookService {
 
                 for (PhotoAppelOffre photo : photos) {
 
+                    if (photo == null) {
+                        continue;
+                    }
+
                     String idPhotoFacebook =
                             televerserPhoto(photo);
 
@@ -168,12 +204,12 @@ public class FacebookService {
             }
 
             logger.info(
-                    "{} photo(s) envoyée(s) à Facebook pour {}",
+                    "{} photo(s) préparée(s) pour la publication {}",
                     idsPhotos.size(),
                     appel.getReference()
             );
 
-            // 5. Préparer la publication
+            // 5. Préparer les données de publication
 
             MultiValueMap<String, String> form =
                     new LinkedMultiValueMap<>();
@@ -183,9 +219,13 @@ public class FacebookService {
 
             if (idsPhotos.isEmpty()) {
 
+                // Publication sans photo
+
                 form.add("link", lienDepot);
 
             } else {
+
+                // Publication avec photos
 
                 for (int i = 0; i < idsPhotos.size(); i++) {
 
@@ -216,70 +256,67 @@ public class FacebookService {
                                 );
 
                         if (!response.getStatusCode().is2xxSuccessful()) {
+
                             throw new EchecPublication(
-                                    "Erreur Facebook : " + contenu
+                                    "Facebook a refusé la publication : "
+                                            + contenu
                             );
                         }
 
                         return contenu;
                     });
 
-            // 7. Analyser la réponse Facebook
+            // 7. Analyser la réponse
 
             JsonNode resultat = analyserReponse(reponse);
 
-            if (resultat.hasNonNull("id")) {
+            if (!resultat.hasNonNull("id")) {
 
-                String idPost = resultat.get("id").asText();
-
-                logger.info(
-                        "Publication Facebook réussie : référence={}, idPost={}, photos={}",
-                        appel.getReference(),
-                        idPost,
-                        idsPhotos.size()
+                return Resultat.echec(
+                        "Facebook n'a pas retourné l'identifiant de publication."
                 );
-
-                return Resultat.ok(idPost);
             }
 
-            return Resultat.echec(
-                    "Facebook n'a pas retourné l'identifiant de publication."
+            String idPost = resultat.get("id").asText();
+
+            logger.info(
+                    "Publication Facebook réussie : référence={}, idPost={}, lien={}",
+                    appel.getReference(),
+                    idPost,
+                    lienDepot
             );
+
+            return Resultat.ok(idPost, lienDepot);
 
         } catch (EchecPublication e) {
 
             logger.error(
-                    "Échec de publication Facebook : {}",
+                    "Échec publication Facebook : {}",
                     e.getMessage()
             );
 
             return Resultat.echec(e.getMessage());
 
-        } catch (RestClientResponseException e) {
+        } catch (RestClientException e) {
 
             logger.error(
-                    "Erreur Facebook API : statut={}, réponse={}",
-                    e.getStatusCode(),
-                    e.getResponseBodyAsString()
+                    "Impossible de contacter l'API Facebook.",
+                    e
             );
 
             return Resultat.echec(
-                    "Facebook a refusé la publication ("
-                            + e.getStatusCode().value()
-                            + "). Détail : "
-                            + e.getResponseBodyAsString()
+                    "Impossible de contacter Facebook. Vérifiez votre connexion et réessayez."
             );
 
         } catch (Exception e) {
 
             logger.error(
-                    "Erreur pendant la publication Facebook",
+                    "Erreur pendant la publication Facebook.",
                     e
             );
 
             return Resultat.echec(
-                    "Impossible de publier sur Facebook : "
-                            + e.getMessage()
+                    "Erreur pendant la publication : " + e.getMessage()
             );
         }
     }
@@ -297,12 +334,11 @@ public class FacebookService {
 
         if (appel.getDateLimiteDepot() != null) {
 
-            dateLimite = appel.getDateLimiteDepot()
-                    .format(
-                            DateTimeFormatter.ofPattern(
-                                    "dd/MM/yyyy 'à' HH:mm"
-                            )
-                    );
+            dateLimite = appel.getDateLimiteDepot().format(
+                    DateTimeFormatter.ofPattern(
+                            "dd/MM/yyyy 'à' HH:mm"
+                    )
+            );
         }
 
         StringBuilder message = new StringBuilder();
@@ -343,6 +379,10 @@ public class FacebookService {
 
             for (PieceRequise piece : pieces) {
 
+                if (piece == null) {
+                    continue;
+                }
+
                 boolean facultative =
                         Boolean.FALSE.equals(piece.getObligatoire());
 
@@ -375,7 +415,7 @@ public class FacebookService {
                 "et déposer leur dossier en ligne.\n\n"
         );
 
-        message.append("👉 Déposer votre offre : ")
+        message.append("👉 DÉPOSER VOTRE OFFRE ICI :\n")
                 .append(lienDepot);
 
         return message.toString();
@@ -404,32 +444,37 @@ public class FacebookService {
             throw new EchecPublication(
                     "La photo "
                             + photo.getNomFichier()
-                            + " est introuvable sur le serveur."
+                            + " est introuvable sur le serveur.",
+                    e
+            );
+        }
+
+        if (octets == null || octets.length == 0) {
+
+            throw new EchecPublication(
+                    "La photo " + photo.getNomFichier() + " est vide."
             );
         }
 
         String type = photo.getTypeContenu();
 
-        if (isBlank(type) || !type.startsWith("image/")) {
+        if (isBlank(type) || !type.toLowerCase().startsWith("image/")) {
 
             throw new EchecPublication(
-                    "Type de photo invalide : "
-                            + photo.getNomFichier()
+                    "Type de photo invalide : " + photo.getNomFichier()
             );
         }
 
         String nomEnvoye =
-                "photo-" + photo.getIdPhoto()
-                        + "." + extension(type);
+                "photo-" + photo.getIdPhoto() + "." + extension(type);
 
-        ByteArrayResource fichier =
-                new ByteArrayResource(octets) {
+        ByteArrayResource fichier = new ByteArrayResource(octets) {
 
-                    @Override
-                    public String getFilename() {
-                        return nomEnvoye;
-                    }
-                };
+            @Override
+            public String getFilename() {
+                return nomEnvoye;
+            }
+        };
 
         HttpHeaders entetesPartie = new HttpHeaders();
 
@@ -450,8 +495,6 @@ public class FacebookService {
 
         try {
 
-            // Envoi multipart de la photo
-
             String reponse = restClient.post()
                     .uri(urlGraph("/photos"))
                     .contentType(MediaType.MULTIPART_FORM_DATA)
@@ -465,6 +508,7 @@ public class FacebookService {
                                 );
 
                         if (!response.getStatusCode().is2xxSuccessful()) {
+
                             throw new EchecPublication(
                                     "Facebook a refusé la photo "
                                             + photo.getNomFichier()
@@ -486,8 +530,7 @@ public class FacebookService {
                 );
             }
 
-            String idFacebook =
-                    resultat.get("id").asText();
+            String idFacebook = resultat.get("id").asText();
 
             logger.info(
                     "Photo envoyée à Facebook : {}",
@@ -500,34 +543,32 @@ public class FacebookService {
 
             throw e;
 
-        } catch (RestClientResponseException e) {
+        } catch (RestClientException e) {
 
             logger.error(
-                    "Erreur Facebook photo : statut={}, réponse={}",
-                    e.getStatusCode(),
-                    e.getResponseBodyAsString()
+                    "Erreur réseau pendant l'envoi de la photo {}",
+                    photo.getNomFichier(),
+                    e
             );
 
             throw new EchecPublication(
-                    "Facebook a refusé la photo "
+                    "Impossible d'envoyer la photo "
                             + photo.getNomFichier()
-                            + " ("
-                            + e.getStatusCode().value()
-                            + ")."
+                            + " à Facebook.",
+                    e
             );
         }
     }
 
     // =====================================================
-    // ANALYSE DE LA REPONSE FACEBOOK
+    // ANALYSE DE LA RÉPONSE FACEBOOK
     // =====================================================
 
     private JsonNode analyserReponse(String reponse) {
 
         try {
 
-            JsonNode resultat =
-                    objectMapper.readTree(reponse);
+            JsonNode resultat = objectMapper.readTree(reponse);
 
             if (resultat == null) {
 
@@ -559,17 +600,19 @@ public class FacebookService {
 
             logger.error(
                     "Réponse Facebook impossible à analyser : {}",
-                    reponse
+                    reponse,
+                    e
             );
 
             throw new EchecPublication(
-                    "Réponse Facebook invalide : impossible de lire le JSON."
+                    "Réponse Facebook invalide : impossible de lire le JSON.",
+                    e
             );
         }
     }
 
     // =====================================================
-    // URL GRAPH API
+    // URL GRAPH API FACEBOOK
     // =====================================================
 
     private String urlGraph(String chemin) {
@@ -582,15 +625,53 @@ public class FacebookService {
     }
 
     // =====================================================
+    // VALIDATION URL FRONTEND PUBLIC
+    // =====================================================
+
+    private String normaliserUrlFrontend(String url) {
+
+        if (isBlank(url)) {
+            return null;
+        }
+
+        String baseUrl = url.trim().replaceAll("/+$", "");
+
+        try {
+
+            URI uri = URI.create(baseUrl);
+
+            if (!"https".equalsIgnoreCase(uri.getScheme())) {
+                return null;
+            }
+
+            if (isBlank(uri.getHost())) {
+                return null;
+            }
+
+            if (uri.getRawQuery() != null ||
+                    uri.getRawFragment() != null) {
+                return null;
+            }
+
+            return baseUrl;
+
+        } catch (Exception e) {
+
+            return null;
+        }
+    }
+
+    // =====================================================
     // OUTILS
     // =====================================================
 
     private static String extension(String type) {
 
-        return switch (type) {
+        return switch (type.toLowerCase()) {
             case "image/png" -> "png";
             case "image/gif" -> "gif";
             case "image/webp" -> "webp";
+            case "image/jpeg", "image/jpg" -> "jpg";
             default -> "jpg";
         };
     }
