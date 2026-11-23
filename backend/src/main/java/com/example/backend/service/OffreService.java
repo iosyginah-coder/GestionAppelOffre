@@ -1,13 +1,18 @@
 
 package com.example.backend.service;
 
+import com.example.backend.dto.OffreEvaluationDto;
+import com.example.backend.dto.OffreEvaluationDto.AppelDto;
+import com.example.backend.dto.OffreEvaluationDto.DocumentDto;
 import com.example.backend.entity.*;
 import com.example.backend.repository.*;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
 import java.nio.file.*;
@@ -359,15 +364,57 @@ public class OffreService {
     // =========================================================
 
     @Transactional(readOnly = true)
-    public List<Offre> listerOffresPourEvaluation() {
+    public List<OffreEvaluationDto> listerOffresPourEvaluation() {
 
         return offreRepository.findByStatutInOrderByDateDepotDesc(
-                List.of(
-                        "DEPOSEE",
-                        "EN_EVALUATION",
-                        "EVALUEE"
-                )
-        );
+                        List.of("DEPOSEE", "EN_EVALUATION", "EVALUEE"))
+                .stream()
+                .map(this::versDto)
+                .toList();
+    }
+
+    private OffreEvaluationDto versDto(Offre o) {
+
+        AppelOffre a = o.getAppelOffre();
+
+        AppelDto appel = a == null ? null : new AppelDto(
+                a.getIdAppelOffre(),
+                a.getReference(),
+                a.getObjet(),
+                a.getDescription(),
+                a.getLieuExecution(),
+                a.getDateLimiteDepot());
+
+        boolean fournisseur =
+                "FOURNISSEUR".equalsIgnoreCase(o.getTypeSoumissionnaire());
+
+        String adresse = fournisseur
+                ? o.getAdresseEntreprise()
+                : o.getAdresseSoumissionnaire();
+
+        String nomAffiche = fournisseur
+                ? o.getEntreprise()
+                : o.getNomSoumissionnaire();
+
+        if (nomAffiche == null || nomAffiche.isBlank()) {
+            nomAffiche = "Soumissionnaire";
+        }
+
+        return new OffreEvaluationDto(
+                o.getIdOffre(),
+                o.getAccuseDeReception(),
+                o.getStatut(),
+                o.getDateDepot(),
+                o.getTypeSoumissionnaire(),
+                nomAffiche,
+                o.getNomSoumissionnaire(),
+                o.getEntreprise(),
+                o.getNif(),
+                o.getStat(),
+                adresse,
+                o.getEmailSoumissionnaire(),
+                o.getTelephoneSoumissionnaire(),
+                appel);
     }
 
     // =========================================================
@@ -433,5 +480,142 @@ public class OffreService {
         }
 
         return chemin;
+    }
+
+    // =========================================================
+    // TOUS LES DOCUMENTS D'UN DOSSIER
+    // =========================================================
+
+    @Transactional(readOnly = true)
+    public List<DocumentDto> listerDocuments(Long idOffre) {
+
+        Offre o = offreRepository.findById(idOffre)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND, "Offre introuvable."));
+
+        List<DocumentDto> docs = new ArrayList<>();
+
+        ajouterFichier(docs, "cin-recto", "Identité", "CIN (recto)", o.getCinRecto());
+        ajouterFichier(docs, "cin-verso", "Identité", "CIN (verso)", o.getCinVerso());
+        ajouterFichier(docs, "technique", "Offre", "Offre technique", o.getOffreTechnique());
+        ajouterFichier(docs, "financiere", "Offre", "Offre financière", o.getOffreFinanciere());
+
+        for (PieceDepot p : pieceDepotRepository
+                .findByOffre_IdOffreOrderByIdPieceDepotAsc(idOffre)) {
+
+            docs.add(new DocumentDto(
+                    "piece-" + p.getIdPieceDepot(),
+                    "Pièce requise",
+                    p.getPieceRequise() != null
+                            ? p.getPieceRequise().getNomPiece()
+                            : "Pièce",
+                    p.getNomFichier(),
+                    p.getTypeContenu()));
+        }
+
+        return docs;
+    }
+
+    private void ajouterFichier(List<DocumentDto> docs, String cle,
+                                String categorie, String libelle,
+                                String chemin) {
+
+        if (chemin == null || chemin.isBlank()) return;
+
+        String nom = chemin.substring(chemin.lastIndexOf('/') + 1);
+
+        docs.add(new DocumentDto(cle, categorie, libelle, nom,
+                typeParExtension(nom)));
+    }
+
+    // =========================================================
+    // TELECHARGEMENT / APERCU D'UN DOCUMENT
+    // =========================================================
+
+    public record FichierOffre(Path chemin, String nom, String typeContenu) {}
+
+    @Transactional(readOnly = true)
+    public FichierOffre fichierDocument(Long idOffre, String cle) {
+
+        Offre o = offreRepository.findById(idOffre)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND, "Offre introuvable."));
+
+        String relatif;
+        String nom;
+        String type;
+
+        if (cle.startsWith("piece-")) {
+
+            Long idPiece;
+
+            try {
+                idPiece = Long.valueOf(cle.substring(6));
+            } catch (NumberFormatException e) {
+                throw new ResponseStatusException(
+                        HttpStatus.BAD_REQUEST, "Document invalide.");
+            }
+
+            PieceDepot p = pieceDepotRepository.findById(idPiece)
+                    .orElseThrow(() -> new ResponseStatusException(
+                            HttpStatus.NOT_FOUND, "Document introuvable."));
+
+            // Sécurité : la pièce doit appartenir à cette offre
+            if (p.getOffre() == null
+                    || !p.getOffre().getIdOffre().equals(idOffre)) {
+                throw new ResponseStatusException(
+                        HttpStatus.FORBIDDEN, "Document non autorisé.");
+            }
+
+            relatif = p.getCheminFichier();
+            nom = p.getNomFichier();
+            type = p.getTypeContenu();
+
+        } else {
+
+            relatif = switch (cle) {
+                case "cin-recto" -> o.getCinRecto();
+                case "cin-verso" -> o.getCinVerso();
+                case "technique" -> o.getOffreTechnique();
+                case "financiere" -> o.getOffreFinanciere();
+                default -> null;
+            };
+
+            if (relatif == null || relatif.isBlank()) {
+                throw new ResponseStatusException(
+                        HttpStatus.NOT_FOUND, "Document introuvable.");
+            }
+
+            String fichier = relatif.substring(relatif.lastIndexOf('/') + 1);
+            int point = fichier.lastIndexOf('.');
+
+            nom = cle + "-" + idOffre + (point >= 0 ? fichier.substring(point) : "");
+            type = typeParExtension(fichier);
+        }
+
+        Path chemin = cheminFichier(relatif);
+
+        if (!Files.isRegularFile(chemin)) {
+            throw new ResponseStatusException(
+                    HttpStatus.NOT_FOUND,
+                    "Le fichier n'existe pas sur le serveur.");
+        }
+
+        if (type == null || type.isBlank()) {
+            type = typeParExtension(nom);
+        }
+
+        return new FichierOffre(chemin, nom, type);
+    }
+
+    private String typeParExtension(String nom) {
+
+        String n = nom == null ? "" : nom.toLowerCase(Locale.ROOT);
+
+        if (n.endsWith(".pdf")) return "application/pdf";
+        if (n.endsWith(".png")) return "image/png";
+        if (n.endsWith(".jpg") || n.endsWith(".jpeg")) return "image/jpeg";
+
+        return "application/octet-stream";
     }
 }

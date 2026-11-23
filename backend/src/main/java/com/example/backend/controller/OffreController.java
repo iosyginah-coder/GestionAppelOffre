@@ -1,6 +1,8 @@
 
 package com.example.backend.controller;
 
+import com.example.backend.dto.OffreEvaluationDto;
+import com.example.backend.dto.OffreEvaluationDto.DocumentDto;
 import com.example.backend.entity.Offre;
 import com.example.backend.entity.PieceDepot;
 import com.example.backend.service.OffreService;
@@ -102,8 +104,37 @@ public class OffreController {
 
     @GetMapping("/evaluateur")
     @PreAuthorize("hasRole('EVALUATEUR')")
-    public ResponseEntity<List<Offre>> listerPourEvaluateur() {
+    public ResponseEntity<List<OffreEvaluationDto>> listerPourEvaluateur() {
         return ResponseEntity.ok(service.listerOffresPourEvaluation());
+    }
+
+    // Tous les documents du dossier (pièces + CIN + offres technique/financière)
+    @GetMapping("/{idOffre}/documents")
+    @PreAuthorize("hasRole('EVALUATEUR')")
+    public ResponseEntity<List<DocumentDto>> listerDocuments(
+            @PathVariable Long idOffre) {
+
+        return ResponseEntity.ok(service.listerDocuments(idOffre));
+    }
+
+    @GetMapping("/{idOffre}/documents/{cle}/telecharger")
+    @PreAuthorize("hasRole('EVALUATEUR')")
+    public ResponseEntity<Resource> telechargerDocument(
+            @PathVariable Long idOffre,
+            @PathVariable String cle) throws Exception {
+
+        OffreService.FichierOffre f = service.fichierDocument(idOffre, cle);
+
+        Resource resource = new UrlResource(f.chemin().toUri());
+
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(f.typeContenu()))
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.inline()
+                                .filename(f.nom())
+                                .build()
+                                .toString())
+                .body(resource);
     }
 
     @GetMapping("/evaluateur/appel/{idAppelOffre}")

@@ -1,13 +1,12 @@
-
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  LayoutDashboard, Users, FolderKanban, ClipboardList, Bell,
+  LayoutDashboard, Users, Bell,
   Search, Plus, Pencil, Trash2, LogOut, Menu, X, RefreshCw,
   ShieldCheck, CheckCircle2, AlertCircle, Save, Sun, Moon,
-  Settings, Check, KeyRound, BriefcaseBusiness
+  Settings, Check, KeyRound, BriefcaseBusiness, UserX
 } from "lucide-react";
 
 import "../../css/admin.css";
@@ -18,8 +17,6 @@ const BASE_URL = (
 
 const API = {
   utilisateurs: `${BASE_URL}/api/utilisateurs`,
-  categories: `${BASE_URL}/api/categories-marches`,
-  criteres: `${BASE_URL}/api/criteres-evaluation`,
   session: `${BASE_URL}/api/auth/session`,
   logout: `${BASE_URL}/api/auth/logout`,
   demandes: `${BASE_URL}/api/auth/password-reset-requests`,
@@ -28,8 +25,6 @@ const API = {
 const MENUS = [
   { id: "dashboard", label: "Tableau de bord", icon: LayoutDashboard },
   { id: "utilisateurs", label: "Utilisateurs", icon: Users },
-  { id: "categories", label: "Catégories de marchés", icon: FolderKanban },
-  { id: "criteres", label: "Grilles d'évaluation", icon: ClipboardList },
 ];
 
 const ROLES = [
@@ -46,18 +41,6 @@ const UTILISATEUR_VIDE = {
   role: "EVALUATEUR",
   departement: "",
   statut: "ACTIF",
-};
-
-const CATEGORIE_VIDE = {
-  nomCategorie: "",
-  description: "",
-  statut: "ACTIF",
-};
-
-const CRITERE_VIDE = {
-  nomCritere: "",
-  description: "",
-  ponderation: "",
 };
 
 async function apiRequest(url, options = {}) {
@@ -118,12 +101,6 @@ function getList(data) {
 function getId(item, type) {
   if (type === "utilisateur") {
     return item.idUtilisateur ?? item.idutilisateur ?? item.id;
-  }
-  if (type === "categorie") {
-    return item.idCategorie ?? item.idCategorieMarche ?? item.id;
-  }
-  if (type === "critere") {
-    return item.idCritere ?? item.id;
   }
   return item.id ?? item.idDemande ?? item.idDemandeReinitialisation;
 }
@@ -189,8 +166,6 @@ export default function AdminPage() {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
 
   const [utilisateurs, setUtilisateurs] = useState([]);
-  const [categories, setCategories] = useState([]);
-  const [criteres, setCriteres] = useState([]);
   const [demandes, setDemandes] = useState([]);
 
   const [loading, setLoading] = useState(false);
@@ -202,12 +177,10 @@ export default function AdminPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
-  const [modalType, setModalType] = useState(null);
+  const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
 
   const [utilisateurForm, setUtilisateurForm] = useState(UTILISATEUR_VIDE);
-  const [categorieForm, setCategorieForm] = useState(CATEGORIE_VIDE);
-  const [critereForm, setCritereForm] = useState(CRITERE_VIDE);
   const [statutInitial, setStatutInitial] = useState("ACTIF");
 
   const currentMenu = MENUS.find((menu) => menu.id === activeMenu);
@@ -244,16 +217,6 @@ export default function AdminPage() {
     setUtilisateurs(getList(data));
   }, []);
 
-  const chargerCategories = useCallback(async () => {
-    const data = await apiRequest(API.categories);
-    setCategories(getList(data));
-  }, []);
-
-  const chargerCriteres = useCallback(async () => {
-    const data = await apiRequest(API.criteres);
-    setCriteres(getList(data));
-  }, []);
-
   const chargerDemandes = useCallback(async () => {
     try {
       const data = await apiRequest(API.demandes);
@@ -273,17 +236,10 @@ export default function AdminPage() {
 
     const operations = await Promise.allSettled([
       chargerUtilisateurs(),
-      chargerCategories(),
-      chargerCriteres(),
       chargerDemandes(),
     ]);
 
-    const labels = [
-      "utilisateurs",
-      "catégories de marchés",
-      "critères d'évaluation",
-      "notifications",
-    ];
+    const labels = ["utilisateurs", "notifications"];
 
     const failed = operations
       .map((result, index) => result.status === "rejected" ? labels[index] : null)
@@ -296,7 +252,7 @@ export default function AdminPage() {
     }
 
     setLoading(false);
-  }, [chargerUtilisateurs, chargerCategories, chargerCriteres, chargerDemandes]);
+  }, [chargerUtilisateurs, chargerDemandes]);
 
   useEffect(() => {
     verifierSession();
@@ -330,21 +286,17 @@ export default function AdminPage() {
     return () => window.clearInterval(timer);
   }, [admin, chargerDemandes]);
 
-  const ouvrirCreation = (type) => {
+  const ouvrirCreation = () => {
     setEditingId(null);
     setError("");
     setSuccess("");
-
-    if (type === "utilisateur") setUtilisateurForm({ ...UTILISATEUR_VIDE });
-    if (type === "categorie") setCategorieForm({ ...CATEGORIE_VIDE });
-    if (type === "critere") setCritereForm({ ...CRITERE_VIDE });
-
+    setUtilisateurForm({ ...UTILISATEUR_VIDE });
     setStatutInitial("ACTIF");
-    setModalType(type);
+    setModalOpen(true);
   };
 
-  const ouvrirModification = (type, item) => {
-    const id = getId(item, type);
+  const ouvrirModification = (item) => {
+    const id = getId(item, "utilisateur");
 
     if (id == null) {
       setError("Identifiant introuvable dans les données du backend.");
@@ -355,40 +307,22 @@ export default function AdminPage() {
     setError("");
     setSuccess("");
 
-    if (type === "utilisateur") {
-      setStatutInitial(item.statut || "ACTIF");
-      setUtilisateurForm({
-        matricule: item.matricule || "",
-        nomComplet: item.nomComplet || "",
-        email: item.email || "",
-        role: item.role || "EVALUATEUR",
-        departement: item.departement || "",
-        statut: item.statut || "ACTIF",
-      });
-    }
+    setStatutInitial(item.statut || "ACTIF");
+    setUtilisateurForm({
+      matricule: item.matricule || "",
+      nomComplet: item.nomComplet || "",
+      email: item.email || "",
+      role: item.role || "EVALUATEUR",
+      departement: item.departement || "",
+      statut: item.statut || "ACTIF",
+    });
 
-    if (type === "categorie") {
-      setCategorieForm({
-        nomCategorie: item.nomCategorie || "",
-        description: item.description || "",
-        statut: item.statut || "ACTIF",
-      });
-    }
-
-    if (type === "critere") {
-      setCritereForm({
-        nomCritere: item.nomCritere || "",
-        description: item.description || "",
-        ponderation: String(item.ponderation ?? ""),
-      });
-    }
-
-    setModalType(type);
+    setModalOpen(true);
   };
 
   const fermerModal = () => {
     if (saving) return;
-    setModalType(null);
+    setModalOpen(false);
     setEditingId(null);
     setError("");
   };
@@ -457,7 +391,8 @@ export default function AdminPage() {
       }
 
       await chargerUtilisateurs();
-      setModalType(null);
+      setModalOpen(false);
+      setEditingId(null);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -465,114 +400,23 @@ export default function AdminPage() {
     }
   };
 
-  const enregistrerCategorie = async (event) => {
-    event.preventDefault();
-
-    const nomCategorie = categorieForm.nomCategorie.trim();
-    if (!nomCategorie) {
-      setError("Le nom de la catégorie est obligatoire.");
-      return;
-    }
-
-    setSaving(true);
-    setError("");
-
-    try {
-      const payload = {
-        nomCategorie,
-        description: categorieForm.description.trim(),
-        statut: categorieForm.statut || "ACTIF",
-      };
-
-      await apiRequest(
-        editingId != null ? `${API.categories}/${editingId}` : API.categories,
-        {
-          method: editingId != null ? "PUT" : "POST",
-          body: JSON.stringify(payload),
-        }
-      );
-
-      await chargerCategories();
-      setModalType(null);
-      notifySuccess(editingId != null ? "Catégorie modifiée." : "Catégorie ajoutée.");
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const enregistrerCritere = async (event) => {
-    event.preventDefault();
-
-    const nomCritere = critereForm.nomCritere.trim();
-    const ponderation = Number(critereForm.ponderation);
-
-    if (!nomCritere) {
-      setError("Le nom du critère est obligatoire.");
-      return;
-    }
-    if (!Number.isFinite(ponderation) || ponderation < 0 || ponderation > 100) {
-      setError("La pondération doit être comprise entre 0 et 100.");
-      return;
-    }
-
-    setSaving(true);
-    setError("");
-
-    try {
-      const payload = {
-        nomCritere,
-        description: critereForm.description.trim(),
-        ponderation,
-      };
-
-      await apiRequest(
-        editingId != null ? `${API.criteres}/${editingId}` : API.criteres,
-        {
-          method: editingId != null ? "PUT" : "POST",
-          body: JSON.stringify(payload),
-        }
-      );
-
-      await chargerCriteres();
-      setModalType(null);
-      notifySuccess(editingId != null ? "Critère modifié." : "Critère ajouté.");
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const supprimerElement = async (type, item) => {
-    const id = getId(item, type);
+  const supprimerUtilisateur = async (item) => {
+    const id = getId(item, "utilisateur");
     if (id == null) {
       setError("Identifiant introuvable.");
       return;
     }
 
-    const nom =
-      item.nomComplet || item.nomCategorie || item.nomCritere || "cet élément";
+    const nom = item.nomComplet || "cet utilisateur";
 
     if (!window.confirm(`Voulez-vous vraiment supprimer ${nom} ?`)) return;
 
     setProcessingId(id);
     setError("");
 
-    const url = type === "utilisateur"
-      ? API.utilisateurs
-      : type === "categorie"
-        ? API.categories
-        : API.criteres;
-
     try {
-      await apiRequest(`${url}/${id}`, { method: "DELETE" });
-
-      if (type === "utilisateur") await chargerUtilisateurs();
-      if (type === "categorie") await chargerCategories();
-      if (type === "critere") await chargerCriteres();
-
+      await apiRequest(`${API.utilisateurs}/${id}`, { method: "DELETE" });
+      await chargerUtilisateurs();
       notifySuccess("Suppression effectuée avec succès.");
     } catch (err) {
       setError(err.message);
@@ -637,26 +481,9 @@ export default function AdminPage() {
     );
   }, [utilisateurs, search]);
 
-  const categoriesFiltrees = useMemo(() => {
-    const q = search.toLowerCase();
-    return categories.filter((item) =>
-      `${item.nomCategorie || ""} ${item.description || ""}`
-        .toLowerCase().includes(q)
-    );
-  }, [categories, search]);
-
-  const criteresFiltres = useMemo(() => {
-    const q = search.toLowerCase();
-    return criteres.filter((item) =>
-      `${item.nomCritere || ""} ${item.description || ""}`
-        .toLowerCase().includes(q)
-    );
-  }, [criteres, search]);
-
   const actifs = utilisateurs.filter((u) => u.statut === "ACTIF").length;
-  const totalPonderation = criteres.reduce(
-    (total, item) => total + Number(item.ponderation || 0), 0
-  );
+  const suspendus = utilisateurs.filter((u) => u.statut === "SUSPENDU").length;
+  const evaluateurs = utilisateurs.filter((u) => u.role === "EVALUATEUR").length;
 
   if (sessionLoading) {
     return (
@@ -947,8 +774,8 @@ export default function AdminPage() {
               <div className="spat-stats-grid">
                 <StatCard icon={Users} label="Utilisateurs" value={utilisateurs.length} detail="Comptes enregistrés" />
                 <StatCard icon={CheckCircle2} label="Utilisateurs actifs" value={actifs} detail="Comptes actifs" />
-                <StatCard icon={FolderKanban} label="Catégories" value={categories.length} detail="Catégories configurées" />
-                <StatCard icon={ClipboardList} label="Critères" value={criteres.length} detail="Critères d'évaluation" />
+                <StatCard icon={UserX} label="Utilisateurs suspendus" value={suspendus} detail="Comptes suspendus" />
+                <StatCard icon={KeyRound} label="Demandes en attente" value={demandes.length} detail="Réinitialisations de mot de passe" />
               </div>
 
               <div className="spat-dashboard-bottom">
@@ -960,14 +787,8 @@ export default function AdminPage() {
                     </div>
                   </div>
                   <div className="spat-quick-actions">
-                    <button type="button" onClick={() => ouvrirCreation("utilisateur")}>
+                    <button type="button" onClick={() => { setActiveMenu("utilisateurs"); ouvrirCreation(); }}>
                       <Users size={22} /><span>Créer un utilisateur</span>
-                    </button>
-                    <button type="button" onClick={() => { setActiveMenu("categories"); ouvrirCreation("categorie"); }}>
-                      <FolderKanban size={22} /><span>Ajouter une catégorie</span>
-                    </button>
-                    <button type="button" onClick={() => { setActiveMenu("criteres"); ouvrirCreation("critere"); }}>
-                      <ClipboardList size={22} /><span>Ajouter un critère</span>
                     </button>
                   </div>
                 </section>
@@ -976,7 +797,7 @@ export default function AdminPage() {
                   <div className="spat-panel-heading">
                     <div>
                       <h3>Vue d'ensemble</h3>
-                      <p>État des configurations.</p>
+                      <p>État des comptes.</p>
                     </div>
                   </div>
                   <div className="spat-overview-row">
@@ -984,12 +805,12 @@ export default function AdminPage() {
                     <strong>{demandes.length}</strong>
                   </div>
                   <div className="spat-overview-row">
-                    <span>Critères configurés</span>
-                    <strong>{criteres.length}</strong>
+                    <span>Évaluateurs</span>
+                    <strong>{evaluateurs}</strong>
                   </div>
                   <div className="spat-overview-row">
-                    <span>Total des pondérations des critères</span>
-                    <strong>{totalPonderation.toFixed(2)} %</strong>
+                    <span>Comptes suspendus</span>
+                    <strong>{suspendus}</strong>
                   </div>
                 </section>
               </div>
@@ -1003,7 +824,7 @@ export default function AdminPage() {
                   <h3>Gestion des utilisateurs</h3>
                   <p>Créer, modifier et supprimer les comptes utilisateurs.</p>
                 </div>
-                <button type="button" className="spat-button spat-button-primary" onClick={() => ouvrirCreation("utilisateur")}>
+                <button type="button" className="spat-button spat-button-primary" onClick={ouvrirCreation}>
                   <Plus size={18} /> Nouvel utilisateur
                 </button>
               </div>
@@ -1037,10 +858,10 @@ export default function AdminPage() {
                           <td><Badge value={user.statut} /></td>
                           <td>
                             <div className="spat-row-actions">
-                              <button type="button" className="spat-icon-button spat-edit-button" title="Modifier" onClick={() => ouvrirModification("utilisateur", user)}>
+                              <button type="button" className="spat-icon-button spat-edit-button" title="Modifier" onClick={() => ouvrirModification(user)}>
                                 <Pencil size={16} />
                               </button>
-                              <button type="button" className="spat-icon-button spat-delete-button" title="Supprimer" disabled={processingId === id} onClick={() => supprimerElement("utilisateur", user)}>
+                              <button type="button" className="spat-icon-button spat-delete-button" title="Supprimer" disabled={processingId === id} onClick={() => supprimerUtilisateur(user)}>
                                 <Trash2 size={16} />
                               </button>
                             </div>
@@ -1056,134 +877,10 @@ export default function AdminPage() {
               </div>
             </section>
           )}
-
-          {!loading && activeMenu === "categories" && (
-            <section className="spat-panel">
-              <div className="spat-panel-heading spat-panel-heading-wrap">
-                <div>
-                  <h3>Catégories de marchés</h3>
-                  <p>Configurer les catégories disponibles pour les appels d'offres.</p>
-                </div>
-                <button type="button" className="spat-button spat-button-primary" onClick={() => ouvrirCreation("categorie")}>
-                  <Plus size={18} /> Ajouter une catégorie
-                </button>
-              </div>
-
-              <div className="spat-table-tools">
-                <div className="spat-search">
-                  <Search size={18} />
-                  <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Rechercher une catégorie..." />
-                </div>
-                <span className="spat-result-count">{categoriesFiltrees.length} catégorie(s)</span>
-              </div>
-
-              <div className="spat-table-wrapper">
-                <table className="spat-table">
-                  <thead>
-                    <tr><th>Nom de la catégorie</th><th>Description</th><th>Statut</th><th>Date de création</th><th>Actions</th></tr>
-                  </thead>
-                  <tbody>
-                    {categoriesFiltrees.map((item, index) => {
-                      const id = getId(item, "categorie");
-                      return (
-                        <tr key={id ?? index}>
-                          <td className="spat-name-cell">{item.nomCategorie || "—"}</td>
-                          <td className="spat-description-cell">{item.description || "—"}</td>
-                          <td><Badge value={item.statut} /></td>
-                          <td>{formatDate(item.dateCreation)}</td>
-                          <td>
-                            <div className="spat-row-actions">
-                              <button type="button" className="spat-icon-button spat-edit-button" title="Modifier" onClick={() => ouvrirModification("categorie", item)}><Pencil size={16} /></button>
-                              <button type="button" className="spat-icon-button spat-delete-button" title="Supprimer" disabled={processingId === id} onClick={() => supprimerElement("categorie", item)}><Trash2 size={16} /></button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    {categoriesFiltrees.length === 0 && (
-                      <tr><td colSpan="5"><div className="spat-empty"><FolderKanban size={30} /><strong>Aucune catégorie disponible</strong><p>Utilise le bouton Ajouter une catégorie pour commencer.</p></div></td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          )}
-
-          {!loading && activeMenu === "criteres" && (
-            <section className="spat-panel">
-              <div className="spat-panel-heading spat-panel-heading-wrap">
-                <div>
-                  <h3>Grilles d'évaluation</h3>
-                  <p>Configurer les critères et leurs pondérations.</p>
-                </div>
-                <button type="button" className="spat-button spat-button-primary" onClick={() => ouvrirCreation("critere")}>
-                  <Plus size={18} /> Ajouter un critère
-                </button>
-              </div>
-
-              <div className="spat-info-note">
-                <ClipboardList size={20} />
-                <div>
-                  <strong>Configuration des pondérations</strong>
-                  <p>Chaque critère possède une pondération en pourcentage. Le total affiché ci-dessous est la somme des critères enregistrés.</p>
-                </div>
-              </div>
-
-              <div className="spat-weight-summary">
-                <span>Total des pondérations enregistrées</span>
-                <strong>{totalPonderation.toFixed(2)} %</strong>
-              </div>
-
-              <div className="spat-table-tools">
-                <div className="spat-search">
-                  <Search size={18} />
-                  <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Rechercher un critère..." />
-                </div>
-                <span className="spat-result-count">{criteresFiltres.length} critère(s)</span>
-              </div>
-
-              <div className="spat-table-wrapper">
-                <table className="spat-table">
-                  <thead>
-                    <tr><th>Critère</th><th>Description</th><th>Pondération</th><th>Actions</th></tr>
-                  </thead>
-                  <tbody>
-                    {criteresFiltres.map((item, index) => {
-                      const id = getId(item, "critere");
-                      const weight = Number(item.ponderation || 0);
-                      return (
-                        <tr key={id ?? index}>
-                          <td className="spat-name-cell">{item.nomCritere || "—"}</td>
-                          <td className="spat-description-cell">{item.description || "—"}</td>
-                          <td>
-                            <div className="spat-weight-cell">
-                              <strong>{weight.toFixed(2)} %</strong>
-                              <div className="spat-weight-track">
-                                <div className="spat-weight-progress" style={{ width: `${Math.min(100, Math.max(0, weight))}%` }} />
-                              </div>
-                            </div>
-                          </td>
-                          <td>
-                            <div className="spat-row-actions">
-                              <button type="button" className="spat-icon-button spat-edit-button" title="Modifier" onClick={() => ouvrirModification("critere", item)}><Pencil size={16} /></button>
-                              <button type="button" className="spat-icon-button spat-delete-button" title="Supprimer" disabled={processingId === id} onClick={() => supprimerElement("critere", item)}><Trash2 size={16} /></button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    {criteresFiltres.length === 0 && (
-                      <tr><td colSpan="4"><div className="spat-empty"><ClipboardList size={30} /><strong>Aucun critère configuré</strong><p>Ajoute les critères utilisés pour évaluer les offres.</p></div></td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          )}
         </section>
       </main>
 
-      {modalType && (
+      {modalOpen && (
         <div className="spat-modal-overlay" onMouseDown={(e) => {
           if (e.target === e.currentTarget) fermerModal();
         }}>
@@ -1191,113 +888,63 @@ export default function AdminPage() {
             <div className="spat-modal-heading">
               <div>
                 <span className="spat-modal-kicker">ADMINISTRATION SPAT</span>
-                <h2>
-                  {editingId != null ? "Modifier " : "Ajouter "}
-                  {modalType === "utilisateur" ? "un utilisateur" : modalType === "categorie" ? "une catégorie" : "un critère"}
-                </h2>
+                <h2>{editingId != null ? "Modifier un utilisateur" : "Ajouter un utilisateur"}</h2>
               </div>
               <button type="button" className="spat-icon-button" onClick={fermerModal} disabled={saving}><X size={19} /></button>
             </div>
 
-            {modalType === "utilisateur" && (
-              <form className="spat-form" onSubmit={enregistrerUtilisateur}>
-                <div className="spat-form-grid">
-                  <label>
-                    Matricule
-                    <input value={utilisateurForm.matricule} maxLength={7} disabled={editingId != null} onChange={(e) => setUtilisateurForm({ ...utilisateurForm, matricule: e.target.value.replace(/\D/g, "") })} placeholder="Ex. 1234567" required />
-                  </label>
-                  <label>
-                    Nom complet
-                    <input value={utilisateurForm.nomComplet} onChange={(e) => setUtilisateurForm({ ...utilisateurForm, nomComplet: e.target.value })} required />
-                  </label>
-                  <label>
-                    Adresse e-mail
-                    <input type="email" value={utilisateurForm.email} onChange={(e) => setUtilisateurForm({ ...utilisateurForm, email: e.target.value })} required />
-                  </label>
-                  <label>
-                    Rôle
-                    <select value={utilisateurForm.role} onChange={(e) => setUtilisateurForm({ ...utilisateurForm, role: e.target.value })}>
-                      {ROLES.map((role) => <option key={role} value={role}>{formatRole(role)}</option>)}
-                    </select>
-                  </label>
-                  {utilisateurForm.role !== "SOUMISSIONNAIRE" && (
-                    <label>
-                      Département
-                      <input value={utilisateurForm.departement} onChange={(e) => setUtilisateurForm({ ...utilisateurForm, departement: e.target.value })} required />
-                    </label>
-                  )}
-                  {editingId != null && (
-                    <label>
-                      Statut
-                      <select value={utilisateurForm.statut} onChange={(e) => setUtilisateurForm({ ...utilisateurForm, statut: e.target.value })}>
-                        <option value="ACTIF">ACTIF</option>
-                        <option value="SUSPENDU">SUSPENDU</option>
-                      </select>
-                    </label>
-                  )}
-                </div>
-                <p className="spat-form-help">Le mot de passe initial doit être généré et envoyé par le backend lors de la création du compte.</p>
-                <div className="spat-modal-footer">
-                  <button type="button" className="spat-button spat-button-secondary" onClick={fermerModal} disabled={saving}>Annuler</button>
-                  <button type="submit" className="spat-button spat-button-primary" disabled={saving}>
-                    {saving ? <RefreshCw size={16} className="spat-spin" /> : <Save size={16} />}
-                    Enregistrer
-                  </button>
-                </div>
-              </form>
+            {error && (
+              <div className="spat-alert spat-alert-error" role="alert">
+                <AlertCircle size={19} />
+                <span>{error}</span>
+              </div>
             )}
 
-            {modalType === "categorie" && (
-              <form className="spat-form" onSubmit={enregistrerCategorie}>
+            <form className="spat-form" onSubmit={enregistrerUtilisateur}>
+              <div className="spat-form-grid">
                 <label>
-                  Nom de la catégorie
-                  <input value={categorieForm.nomCategorie} onChange={(e) => setCategorieForm({ ...categorieForm, nomCategorie: e.target.value })} placeholder="Ex. FOURNITURE" required maxLength={100} />
+                  Matricule
+                  <input value={utilisateurForm.matricule} maxLength={7} disabled={editingId != null} onChange={(e) => setUtilisateurForm({ ...utilisateurForm, matricule: e.target.value.replace(/\D/g, "") })} placeholder="Ex. 1234567" required />
                 </label>
                 <label>
-                  Description
-                  <textarea rows={4} value={categorieForm.description} onChange={(e) => setCategorieForm({ ...categorieForm, description: e.target.value })} placeholder="Description de la catégorie..." />
+                  Nom complet
+                  <input value={utilisateurForm.nomComplet} onChange={(e) => setUtilisateurForm({ ...utilisateurForm, nomComplet: e.target.value })} required />
                 </label>
                 <label>
-                  Statut
-                  <select value={categorieForm.statut} onChange={(e) => setCategorieForm({ ...categorieForm, statut: e.target.value })}>
-                    <option value="ACTIF">ACTIF</option>
-                    <option value="INACTIF">INACTIF</option>
+                  Adresse e-mail
+                  <input type="email" value={utilisateurForm.email} onChange={(e) => setUtilisateurForm({ ...utilisateurForm, email: e.target.value })} required />
+                </label>
+                <label>
+                  Rôle
+                  <select value={utilisateurForm.role} onChange={(e) => setUtilisateurForm({ ...utilisateurForm, role: e.target.value })}>
+                    {ROLES.map((role) => <option key={role} value={role}>{formatRole(role)}</option>)}
                   </select>
                 </label>
-                <div className="spat-modal-footer">
-                  <button type="button" className="spat-button spat-button-secondary" onClick={fermerModal} disabled={saving}>Annuler</button>
-                  <button type="submit" className="spat-button spat-button-primary" disabled={saving}>
-                    {saving ? <RefreshCw size={16} className="spat-spin" /> : <Save size={16} />}
-                    Enregistrer
-                  </button>
-                </div>
-              </form>
-            )}
-
-            {modalType === "critere" && (
-              <form className="spat-form" onSubmit={enregistrerCritere}>
-                <label>
-                  Nom du critère
-                  <input value={critereForm.nomCritere} onChange={(e) => setCritereForm({ ...critereForm, nomCritere: e.target.value })} placeholder="Ex. Prix financier" required />
-                </label>
-                <label>
-                  Description
-                  <textarea rows={3} value={critereForm.description} onChange={(e) => setCritereForm({ ...critereForm, description: e.target.value })} placeholder="Description du critère..." />
-                </label>
-                <label>
-                  Pondération (%)
-                  <input type="number" min="0" max="100" step="0.01" value={critereForm.ponderation} onChange={(e) => setCritereForm({ ...critereForm, ponderation: e.target.value })} placeholder="Ex. 40" required />
-                  <small>Valeur comprise entre 0 et 100.</small>
-                </label>
-                <div className="spat-modal-footer">
-                  <button type="button" className="spat-button spat-button-secondary" onClick={fermerModal} disabled={saving}>Annuler</button>
-                  <button type="submit" className="spat-button spat-button-primary" disabled={saving}>
-                    {saving ? <RefreshCw size={16} className="spat-spin" /> : <Save size={16} />}
-                    Enregistrer
-                  </button>
-                </div>
-              </form>
-            )}
+                {utilisateurForm.role !== "SOUMISSIONNAIRE" && (
+                  <label>
+                    Département
+                    <input value={utilisateurForm.departement} onChange={(e) => setUtilisateurForm({ ...utilisateurForm, departement: e.target.value })} required />
+                  </label>
+                )}
+                {editingId != null && (
+                  <label>
+                    Statut
+                    <select value={utilisateurForm.statut} onChange={(e) => setUtilisateurForm({ ...utilisateurForm, statut: e.target.value })}>
+                      <option value="ACTIF">ACTIF</option>
+                      <option value="SUSPENDU">SUSPENDU</option>
+                    </select>
+                  </label>
+                )}
+              </div>
+              <p className="spat-form-help">Le mot de passe initial doit être généré et envoyé par le backend lors de la création du compte.</p>
+              <div className="spat-modal-footer">
+                <button type="button" className="spat-button spat-button-secondary" onClick={fermerModal} disabled={saving}>Annuler</button>
+                <button type="submit" className="spat-button spat-button-primary" disabled={saving}>
+                  {saving ? <RefreshCw size={16} className="spat-spin" /> : <Save size={16} />}
+                  Enregistrer
+                </button>
+              </div>
+            </form>
           </section>
         </div>
       )}

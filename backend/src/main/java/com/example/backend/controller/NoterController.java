@@ -1,4 +1,3 @@
-
 package com.example.backend.controller;
 
 import com.example.backend.service.EvaluationService;
@@ -20,7 +19,7 @@ public class NoterController {
         this.evaluationService = evaluationService;
     }
 
-    // Consulter les notes déjà enregistrées pour une offre
+    // Consulter les notes de l'évaluateur connecté pour une offre
     @GetMapping("/offre/{offreId}")
     public ResponseEntity<?> notesParOffre(
             @PathVariable Long offreId
@@ -38,5 +37,14 @@ public class NoterController {
         return ResponseEntity
                 .status(HttpStatus.OK)
                 .body(evaluationService.enregistrerEvaluation(request));
+    }
+
+    // Supprimer une note (uniquement la sienne)
+    @DeleteMapping("/{idNoter}")
+    public ResponseEntity<Void> supprimer(
+            @PathVariable Long idNoter
+    ) {
+        evaluationService.supprimerNote(idNoter);
+        return ResponseEntity.noContent().build();
     }
 }

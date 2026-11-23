@@ -19,6 +19,7 @@ const MENU = [
   { id: "appels", label: "Appels d'offres", icon: FileText },
   { id: "publication", label: "Publication", icon: Megaphone },
   { id: "rapports", label: "Rapports", icon: ChartNoAxesCombined },
+  { id: "critereevaluation", label: "Critères d'évaluation", icon: ClipboardList },
 ];
 
 // La référence est saisie manuellement par le responsable.
@@ -1128,32 +1129,44 @@ export default function ResponsablePage() {
 
         <div className="resp-menu-title">MENU PRINCIPAL</div>
 
-        <nav className="resp-navigation">
+       <nav className="resp-navigation">
           {MENU.map((item) => {
             const Icon = item.icon;
 
             return (
               <button
                 key={item.id}
-                className={`resp-nav-item ${activeMenu === item.id ? "active" : ""}`}
+                type="button"
+                className={`resp-nav-item ${
+                  activeMenu === item.id ? "active" : ""
+                }`}
                 onClick={() => {
-                  setActiveMenu(item.id);
                   setSidebarOpen(false);
+
+                  if (item.id === "critereevaluation") {
+                    router.push("/dashboard/responsable/critereevaluation");
+                    return;
+                  }
+
+                  setActiveMenu(item.id);
                 }}
               >
                 <Icon size={19} />
                 <span>{item.label}</span>
 
                 {item.id === "publication" && aPublier.length > 0 && (
-                  <span className="rx-badge-count">{aPublier.length}</span>
+                  <span className="rx-badge-count">
+                    {aPublier.length}
+                  </span>
                 )}
 
-                {activeMenu === item.id && <ChevronRight size={17} className="resp-nav-arrow" />}
+                {activeMenu === item.id && (
+                  <ChevronRight size={17} className="resp-nav-arrow" />
+                )}
               </button>
             );
           })}
         </nav>
-
         <div className="resp-sidebar-bottom">
           <div className="resp-sidebar-help">
             <div className="resp-help-icon">

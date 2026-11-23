@@ -308,7 +308,7 @@ public class EvaluationService {
 
     public List<NoteDto> listerNotes(Long offreId) {
 
-        evaluateurConnecte();
+        Utilisateur evaluateur = evaluateurConnecte();
 
         if (!offreRepository.existsById(offreId)) {
 
@@ -318,11 +318,59 @@ public class EvaluationService {
             );
         }
 
+        // Uniquement les notes de l'évaluateur connecté
         return noterRepository
-                .findByOffre_IdOffreOrderByIdNoterAsc(offreId)
+                .findByOffre_IdOffreAndUtilisateur_IdUtilisateur(
+                        offreId,
+                        evaluateur.getIdUtilisateur()
+                )
                 .stream()
+                .sorted(Comparator.comparing(Noter::getIdNoter))
                 .map(this::convertirNote)
                 .collect(Collectors.toList());
+    }
+
+    // =====================================================
+    // SUPPRESSION D'UNE NOTE
+    // =====================================================
+
+    @Transactional
+    public void supprimerNote(Long idNoter) {
+
+        Utilisateur evaluateur = evaluateurConnecte();
+
+        Noter note = noterRepository.findById(idNoter)
+                .orElseThrow(() ->
+                        new ResponseStatusException(
+                                HttpStatus.NOT_FOUND,
+                                "Note introuvable."
+                        )
+                );
+
+        if (note.getUtilisateur() == null
+                || !note.getUtilisateur().getIdUtilisateur()
+                .equals(evaluateur.getIdUtilisateur())) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.FORBIDDEN,
+                    "Vous ne pouvez supprimer que vos propres notes."
+            );
+        }
+
+        Offre offre = note.getOffre();
+
+        noterRepository.delete(note);
+        noterRepository.flush();
+
+        int restantes = noterRepository
+                .findByOffre_IdOffreAndUtilisateur_IdUtilisateur(
+                        offre.getIdOffre(),
+                        evaluateur.getIdUtilisateur()
+                )
+                .size();
+
+        offre.setStatut(restantes == 0 ? "DEPOSEE" : "EN_EVALUATION");
+        offreRepository.save(offre);
     }
 
     private NoteDto convertirNote(Noter noter) {
@@ -723,4 +771,5 @@ public class EvaluationService {
             String nomFichier,
             byte[] contenu
     ) {}
+
 }
