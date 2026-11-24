@@ -1,4 +1,3 @@
-
 package com.example.backend.repository;
 
 import com.example.backend.entity.Noter;
@@ -11,6 +10,9 @@ import java.util.Optional;
 @Repository
 public interface NoterRepository
         extends JpaRepository<Noter, Long> {
+
+    // Suppression de toutes les notes d'une offre
+    void deleteByOffre_IdOffre(Long offreId);
 
     // Toutes les notes d'une offre
     List<Noter> findByOffre_IdOffreOrderByIdNoterAsc(

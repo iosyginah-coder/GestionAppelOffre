@@ -7,7 +7,7 @@ import {
   Plus, Pencil, Trash2, Eye, LogOut, Menu, X, RefreshCw, CheckCircle2, Clock,
   AlertTriangle, Ban, FileCheck, ClipboardList, CalendarDays, Sun, Moon,
   ChevronDown, ChevronRight, Filter, ArrowUpRight, Building2, TrendingUp,
-  CircleHelp, Send, Download, Megaphone, Check, ImagePlus,
+  CircleHelp, Send, Download, Megaphone, Check, ImagePlus, Inbox, FileSignature,
 } from "lucide-react";
 
 import "../../css/responsable.css";
@@ -18,8 +18,11 @@ const MENU = [
   { id: "dashboard", label: "Tableau de bord", icon: LayoutDashboard },
   { id: "appels", label: "Appels d'offres", icon: FileText },
   { id: "publication", label: "Publication", icon: Megaphone },
-  { id: "rapports", label: "Rapports", icon: ChartNoAxesCombined },
   { id: "critereevaluation", label: "Critères d'évaluation", icon: ClipboardList },
+  { id: "listetransmise", label: "Listes transmises", icon: Inbox },
+  { id: "contrat", label: "Contrats", icon: FileSignature },
+  { id: "rapports", label: "Rapports", icon: ChartNoAxesCombined },
+
 ];
 
 // La référence est saisie manuellement par le responsable.
@@ -927,15 +930,10 @@ export default function ResponsablePage() {
   };
 
   const supprimerAppel = (appel) => {
-    if (appel.statut !== "BROUILLON") {
-      setError("Seuls les brouillons peuvent être supprimés.");
-      return;
-    }
-
     demanderConfirmation({
-      title: "Supprimer ce brouillon ?",
-      message: `« ${appel.objet} » sera supprimé définitivement avec ses pièces requises.`,
-      confirmLabel: "Supprimer",
+      title: "Supprimer totalement cet appel d'offres ?",
+      message: `« ${appel.objet} » sera supprimé définitivement, avec ses offres déposées, notes, validations, contrats et fichiers. Cette action est irréversible.`,
+      confirmLabel: "Supprimer définitivement",
       danger: true,
 
       onConfirm: async () => {
@@ -943,12 +941,6 @@ export default function ResponsablePage() {
         setBusyId(appel.idAppelOffre);
 
         try {
-          const pieces = await chargerPieces(appel.idAppelOffre);
-
-          for (const p of pieces) {
-            await apiFetch(`/api/pieces-requises/${p.idPiece}`, { method: "DELETE" });
-          }
-
           await apiFetch(`/api/appel-offres/${appel.idAppelOffre}`, { method: "DELETE" });
 
           await chargerDonnees(false);
@@ -1067,10 +1059,6 @@ export default function ResponsablePage() {
           <button className="resp-action publish" title="Publier" onClick={() => executerAction(appel, "publier")}>
             <Send size={16} />
           </button>
-
-          <button className="resp-action delete" title="Supprimer" onClick={() => supprimerAppel(appel)}>
-            <Trash2 size={16} />
-          </button>
         </>
       )}
 
@@ -1091,6 +1079,11 @@ export default function ResponsablePage() {
           <FileCheck size={16} />
         </button>
       )}
+
+      {/* Supprimer : disponible pour TOUS les statuts */}
+      <button className="resp-action delete" title="Supprimer" onClick={() => supprimerAppel(appel)}>
+        <Trash2 size={16} />
+      </button>
     </div>
   );
 
@@ -1145,6 +1138,16 @@ export default function ResponsablePage() {
 
                   if (item.id === "critereevaluation") {
                     router.push("/dashboard/responsable/critereevaluation");
+                    return;
+                  }
+
+                  if (item.id === "listetransmise") {
+                    router.push("/dashboard/responsable/listetransmise");
+                    return;
+                  }
+
+                  if (item.id === "contrat") {
+                    router.push("/dashboard/responsable/contrat");
                     return;
                   }
 
@@ -2348,6 +2351,18 @@ export default function ResponsablePage() {
                   </button>
                 </>
               )}
+
+              <button
+                className="resp-secondary-button"
+                style={{ color: "#ef4444", borderColor: "#ef4444" }}
+                onClick={() => {
+                  setDetailOpen(false);
+                  supprimerAppel(selectedAppel);
+                }}
+              >
+                <Trash2 size={17} />
+                Supprimer
+              </button>
             </div>
           </div>
         </div>

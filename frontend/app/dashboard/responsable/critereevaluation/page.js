@@ -26,6 +26,7 @@ import {
   Filter,
   Eye,
   Target,
+  Inbox,
 } from "lucide-react";
 
 import "../../../css/responsable.css";
@@ -47,6 +48,7 @@ const MENU = [
     label: "Critères d'évaluation",
     icon: ClipboardList,
   },
+  { id: "listetransmise", label: "Listes transmises", icon: Inbox },
 ];
 
 const FORM_VIDE = {
@@ -922,6 +924,11 @@ export default function CritereEvaluationPage() {
     setSidebarOpen(false);
 
     if (id === "critereevaluation") return;
+
+    if (id === "listetransmise") {
+      router.push("/dashboard/responsable/listetransmise");
+      return;
+    }
 
     router.push("/dashboard/responsable");
   };

@@ -3,40 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  LayoutDashboard,
-  FolderOpen,
-  Trophy,
-  Search,
-  RefreshCw,
-  LogOut,
-  Menu,
-  X,
-  Download,
-  Save,
-  CheckCircle2,
-  AlertCircle,
-  Building2,
-  UserRound,
-  CalendarDays,
-  MapPin,
-  Mail,
-  Phone,
-  Hash,
-  Eye,
-  Trash2,
-  FileText,
-  FileImage,
-  IdCard,
-  Banknote,
-  Wrench,
-  ChevronRight,
-  ChevronDown,
-  Medal,
-  ImageOff,
-  Users,
-  Clock3,
-  ClipboardCheck,
-  Gauge,
+  LayoutDashboard, FolderOpen, Trophy, Search, RefreshCw, LogOut, Menu, X,
+  Download, Save, CheckCircle2, AlertCircle, Building2, UserRound, CalendarDays,
+  MapPin, Mail, Phone, Hash, Eye, Trash2, FileText, FileImage, IdCard, Banknote,
+  Wrench, ChevronRight, ChevronLeft, Medal, ImageOff, Users, Clock3,
+  ClipboardCheck, Gauge, Send, Lock, Check,
 } from "lucide-react";
 
 import "../../css/evaluateur.css";
@@ -44,6 +15,11 @@ import "../../css/evaluateur.css";
 const API_BASE = (
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080"
 ).replace(/\/$/, "");
+
+/* Endpoints (ClassementController, côté backend) : transmission de la sélection d'UN appel
+   d'offres au Responsable des marchés, et liste des appels déjà transmis. */
+const TRANSMETTRE_URL = "/api/classements/transmettre";
+const TRANSMIS_URL = "/api/classements/transmis";
 
 /* =====================================================
    API
@@ -53,10 +29,7 @@ async function apiRequest(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
     credentials: "include",
     ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
   });
 
   const type = response.headers.get("content-type") || "";
@@ -65,11 +38,7 @@ async function apiRequest(path, options = {}) {
 
   if (raw) {
     if (type.includes("application/json")) {
-      try {
-        data = JSON.parse(raw);
-      } catch {
-        data = null;
-      }
+      try { data = JSON.parse(raw); } catch { data = null; }
     } else {
       data = raw;
     }
@@ -82,20 +51,15 @@ async function apiRequest(path, options = {}) {
     else if (data?.error) message = data.error;
     throw new Error(message);
   }
-
   return data;
 }
 
 async function fetchBlob(path) {
-  const response = await fetch(`${API_BASE}${path}`, {
-    credentials: "include",
-  });
-
+  const response = await fetch(`${API_BASE}${path}`, { credentials: "include" });
   if (!response.ok) {
     const message = await response.text().catch(() => "");
     throw new Error(message || `Erreur HTTP ${response.status}`);
   }
-
   return response.blob();
 }
 
@@ -104,13 +68,10 @@ async function fetchBlob(path) {
 ===================================================== */
 
 const normalizeList = (data) =>
-  Array.isArray(data)
-    ? data
-    : Array.isArray(data?.content)
-    ? data.content
-    : Array.isArray(data?.data)
-    ? data.data
-    : [];
+  Array.isArray(data) ? data
+  : Array.isArray(data?.content) ? data.content
+  : Array.isArray(data?.data) ? data.data
+  : [];
 
 const getIdOffre = (o) => o?.idOffre ?? o?.id;
 const getAppel = (o) => o?.appelOffre ?? {};
@@ -119,14 +80,7 @@ const getIdAppel = (o) => getAppel(o)?.idAppelOffre;
 function toDate(value) {
   if (!value) return null;
   const date = Array.isArray(value)
-    ? new Date(
-        value[0],
-        (value[1] || 1) - 1,
-        value[2] || 1,
-        value[3] || 0,
-        value[4] || 0,
-        value[5] || 0
-      )
+    ? new Date(value[0], (value[1] || 1) - 1, value[2] || 1, value[3] || 0, value[4] || 0, value[5] || 0)
     : new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
 }
@@ -141,16 +95,9 @@ function formatDate(value, withTime = true) {
 }
 
 const formatScore = (n) =>
-  Number(n).toLocaleString("fr-FR", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+  Number(n).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-const COLORS = {
-  pending: "#e8a33d",
-  progress: "#1d5fa8",
-  done: "#17803d",
-};
+const COLORS = { pending: "#e8a33d", progress: "#1d5fa8", done: "#17803d" };
 
 const STATUTS = {
   DEPOSEE: { label: "À évaluer", tone: "pending" },
@@ -178,13 +125,9 @@ const typeLabel = (o) =>
     : "Personne physique";
 
 const critId = (row) => row?.idCritere ?? row?.critere?.idCritere;
-const critNom = (row) =>
-  row?.nomCritere ?? row?.critere?.nomCritere ?? "Critère";
+const critNom = (row) => row?.nomCritere ?? row?.critere?.nomCritere ?? "Critère";
 const critDescription = (row) =>
-  row?.descriptionCritere ??
-  row?.critere?.description ??
-  row?.description ??
-  "";
+  row?.descriptionCritere ?? row?.critere?.description ?? row?.description ?? "";
 const critPonderation = (row) => {
   const n = Number(row?.ponderation ?? row?.critere?.ponderation ?? 0);
   return Number.isFinite(n) ? n : 0;
@@ -195,8 +138,7 @@ function criteresPourAppel(criteres, appelId) {
   return criteres
     .filter(
       (row) =>
-        Number(row?.idAppelOffre ?? row?.appelOffre?.idAppelOffre) ===
-        Number(appelId)
+        Number(row?.idAppelOffre ?? row?.appelOffre?.idAppelOffre) === Number(appelId)
     )
     .sort((a, b) => critNom(a).localeCompare(critNom(b), "fr"));
 }
@@ -211,9 +153,7 @@ function docIcon(doc) {
 }
 
 const photoUrl = (photo) =>
-  /^https?:/i.test(photo?.url || "")
-    ? photo.url
-    : `${API_BASE}${photo?.url || ""}`;
+  /^https?:/i.test(photo?.url || "") ? photo.url : `${API_BASE}${photo?.url || ""}`;
 
 /* Score pondéré sur 20 : somme(note × pondération) / somme(pondérations notées) */
 function calculerScore(notesParCritere, criteres) {
@@ -253,6 +193,43 @@ function notesVersMap(notes) {
   return map;
 }
 
+/* Classement d'UN SEUL appel d'offres.
+   - Seules les évaluations complètes sont classées (rang 1, 2, 3…, ex æquo gérés).
+   - Les évaluations partielles sont listées à part, sans rang.
+   - Le classement est « prêt » quand TOUTES les offres de l'appel sont complètement notées. */
+function construireClassement(offresAppel, scores) {
+  const notees = offresAppel
+    .map((o) => ({ offre: o, res: scores[getIdOffre(o)] }))
+    .filter((x) => x.res);
+
+  const classes = notees
+    .filter((x) => x.res.complet)
+    .sort((a, b) => b.res.score - a.res.score);
+
+  let rang = 0;
+  let dernier = null;
+  classes.forEach((x, i) => {
+    const s = Math.round(x.res.score * 100) / 100;
+    if (s !== dernier) {
+      rang = i + 1;
+      dernier = s;
+    }
+    x.rang = rang;
+  });
+
+  const partiels = notees
+    .filter((x) => !x.res.complet)
+    .sort((a, b) => b.res.score - a.res.score);
+
+  return {
+    classes,
+    partiels,
+    nonNotees: offresAppel.length - notees.length,
+    total: offresAppel.length,
+    pret: offresAppel.length > 0 && classes.length === offresAppel.length,
+  };
+}
+
 /* =====================================================
    PAGE
 ===================================================== */
@@ -268,15 +245,27 @@ export default function EvaluateurPage() {
   const [scores, setScores] = useState({});
 
   const [loading, setLoading] = useState(true);
+  // Date courante : lue côté client après le montage (évite `new Date()` pendant le prérendu)
+  const [maintenant, setMaintenant] = useState(null);
   const [mobileMenu, setMobileMenu] = useState(false);
   const [activeTab, setActiveTab] = useState("dashboard");
   const [notice, setNotice] = useState({ type: "", message: "" });
 
   const [search, setSearch] = useState("");
   const [statutFilter, setStatutFilter] = useState("TOUS");
-  const [appelFilter, setAppelFilter] = useState("TOUS");
-  const [fermes, setFermes] = useState({});
   const [zoom, setZoom] = useState(null);
+
+  // Appel d'offres sélectionné (vue détaillée) + onglet interne
+  const [selectedAppelId, setSelectedAppelId] = useState(null);
+  const [appelTab, setAppelTab] = useState("soumissionnaires");
+  // Appel choisi dans l'onglet « Classement »
+  const [classementAppelId, setClassementAppelId] = useState("");
+  // Transmissions au Responsable des marchés
+  const [transmis, setTransmis] = useState({});
+  const [transmitting, setTransmitting] = useState(null);
+  const [appelsTransmis, setAppelsTransmis] = useState([]);
+  // Offres cochées pour la transmission : { [idAppelOffre]: [idOffre, ...] }
+  const [selection, setSelection] = useState({});
 
   // Fenêtre d'évaluation
   const [offre, setOffre] = useState(null);
@@ -320,10 +309,7 @@ export default function EvaluateurPage() {
           const data = normalizeList(
             await apiRequest(`/api/appel-offres/publications/${id}/photos`)
           );
-          return [
-            id,
-            data.filter((p) => String(p?.typeContenu || "").startsWith("image/")),
-          ];
+          return [id, data.filter((p) => String(p?.typeContenu || "").startsWith("image/"))];
         } catch {
           return [id, []];
         }
@@ -335,13 +321,13 @@ export default function EvaluateurPage() {
   const loadDashboard = useCallback(async () => {
     setLoading(true);
     try {
-      const [sessionData, offresData, criteresData, pubData] =
-        await Promise.all([
-          apiRequest("/api/auth/session"),
-          apiRequest("/api/offres/evaluateur"),
-          apiRequest("/api/appel-offre-criteres"),
-          apiRequest("/api/appel-offres/publications").catch(() => []),
-        ]);
+      const [sessionData, offresData, criteresData, pubData, transmisData] = await Promise.all([
+        apiRequest("/api/auth/session"),
+        apiRequest("/api/offres/evaluateur"),
+        apiRequest("/api/appel-offre-criteres"),
+        apiRequest("/api/appel-offres/publications").catch(() => []),
+        apiRequest(TRANSMIS_URL).catch(() => []),
+      ]);
 
       const role = String(sessionData?.role || "").toUpperCase();
       if (role && role !== "EVALUATEUR") {
@@ -356,12 +342,11 @@ export default function EvaluateurPage() {
       setOffres(liste);
       setCriteresTous(criteres);
       setPublications(pubs);
+      setAppelsTransmis(normalizeList(transmisData).map(Number));
 
       const ids = [
         ...new Set(
-          [...liste.map(getIdAppel), ...pubs.map((p) => p?.idAppelOffre)].filter(
-            (x) => x != null
-          )
+          [...liste.map(getIdAppel), ...pubs.map((p) => p?.idAppelOffre)].filter((x) => x != null)
         ),
       ];
 
@@ -376,6 +361,7 @@ export default function EvaluateurPage() {
   }, [chargerScores, chargerPhotos]);
 
   useEffect(() => {
+    setMaintenant(new Date());
     loadDashboard();
   }, [loadDashboard]);
 
@@ -443,51 +429,49 @@ export default function EvaluateurPage() {
     });
   }, [offres, publications]);
 
-  const groupesFiltres = useMemo(() => {
+  // Seuls les appels ayant reçu des dépôts sont classables
+  const groupesAvecDepots = useMemo(
+    () => groupes.filter((g) => g.offres.length > 0),
+    [groupes]
+  );
+
+  // Un classement INDÉPENDANT par appel d'offres
+  const classements = useMemo(() => {
+    const out = {};
+    groupes.forEach((g) => {
+      out[g.id] = construireClassement(g.offres, scores);
+    });
+    return out;
+  }, [groupes, scores]);
+
+  const appelSelectionne = useMemo(
+    () => groupes.find((g) => g.id === selectedAppelId) || null,
+    [groupes, selectedAppelId]
+  );
+
+  // Soumissionnaires de l'appel sélectionné UNIQUEMENT (+ filtres)
+  const offresFiltrees = useMemo(() => {
+    if (!appelSelectionne) return [];
     const term = search.trim().toLowerCase();
 
-    return groupes
-      .filter((g) => appelFilter === "TOUS" || String(g.id) === appelFilter)
-      .map((g) => {
-        const appelTexte = [g.appel?.reference, g.appel?.objet]
-          .map((v) => String(v || "").toLowerCase())
-          .join(" ");
-        const appelMatch = !!term && appelTexte.includes(term);
+    return appelSelectionne.offres.filter((o) => {
+      const texte = [nomSoumissionnaire(o), o.email, o.nif, o.accuseDeReception]
+        .map((v) => String(v || "").toLowerCase())
+        .join(" ");
+      const okTexte = !term || texte.includes(term);
+      const okStatut = statutFilter === "TOUS" || statutOf(o) === statutFilter;
+      return okTexte && okStatut;
+    });
+  }, [appelSelectionne, search, statutFilter]);
 
-        const liste = g.offres.filter((o) => {
-          const texte = [
-            nomSoumissionnaire(o),
-            o.email,
-            o.nif,
-            o.accuseDeReception,
-          ]
-            .map((v) => String(v || "").toLowerCase())
-            .join(" ");
-
-          const okTexte = !term || appelMatch || texte.includes(term);
-          const okStatut = statutFilter === "TOUS" || statutOf(o) === statutFilter;
-          return okTexte && okStatut;
-        });
-
-        return { ...g, offresFiltrees: liste, appelMatch };
-      })
-      .filter((g) => {
-        const filtre = term || statutFilter !== "TOUS";
-        return !filtre || g.offresFiltrees.length > 0 || g.appelMatch;
-      });
-  }, [groupes, search, statutFilter, appelFilter]);
-
-  const classement = useMemo(
-    () =>
-      offres
-        .map((o) => ({ offre: o, res: scores[getIdOffre(o)] }))
-        .filter((x) => x.res)
-        .sort((a, b) => {
-          if (a.res.complet !== b.res.complet) return a.res.complet ? -1 : 1;
-          return b.res.score - a.res.score;
-        }),
-    [offres, scores]
-  );
+  // Appel affiché dans l'onglet « Classement »
+  const classementGroupe = useMemo(() => {
+    if (groupesAvecDepots.length === 0) return null;
+    return (
+      groupesAvecDepots.find((g) => String(g.id) === String(classementAppelId)) ||
+      groupesAvecDepots[0]
+    );
+  }, [groupesAvecDepots, classementAppelId]);
 
   // Données du tableau de bord
   const dash = useMemo(() => {
@@ -497,23 +481,25 @@ export default function EvaluateurPage() {
       { label: "Évaluées", value: stats.evaluees, color: COLORS.done },
     ];
 
-    const parAppel = groupes
-      .filter((g) => g.offres.length > 0)
-      .map((g) => {
-        const c = (s) => g.offres.filter((o) => statutOf(o) === s).length;
-        return {
-          label: g.appel?.reference || `#${g.id}`,
-          objet: g.appel?.objet || "",
-          a: c("DEPOSEE"),
-          b: c("EN_EVALUATION"),
-          c: c("EVALUEE"),
-          total: g.offres.length,
-        };
-      });
+    const parAppel = groupesAvecDepots.map((g) => {
+      const c = (s) => g.offres.filter((o) => statutOf(o) === s).length;
+      return {
+        label: g.appel?.reference || `#${g.id}`,
+        objet: g.appel?.objet || "",
+        a: c("DEPOSEE"),
+        b: c("EN_EVALUATION"),
+        c: c("EVALUEE"),
+        total: g.offres.length,
+      };
+    });
 
     const jours = [];
     for (let i = 13; i >= 0; i--) {
-      const d = new Date();
+      if (!maintenant) {
+        jours.push({ label: "", value: 0 });
+        continue;
+      }
+      const d = new Date(maintenant);
       d.setHours(0, 0, 0, 0);
       d.setDate(d.getDate() - i);
       const key = d.toDateString();
@@ -523,20 +509,25 @@ export default function EvaluateurPage() {
       });
     }
 
-    const completes = classement.filter((x) => x.res.complet);
+    const completes = Object.values(scores).filter((r) => r?.complet);
     const moyenne = completes.length
-      ? completes.reduce((s, x) => s + x.res.score, 0) / completes.length
+      ? completes.reduce((s, r) => s + r.score, 0) / completes.length
       : null;
+
+    // Meilleure offre de CHAQUE appel d'offres
+    const leaders = groupesAvecDepots
+      .map((g) => ({ g, premier: classements[g.id]?.classes[0] }))
+      .filter((x) => x.premier);
 
     return {
       statuts,
       parAppel,
       jours,
       moyenne,
-      top: classement.slice(0, 5),
+      leaders,
       progression: stats.total ? Math.round((stats.evaluees / stats.total) * 100) : 0,
     };
-  }, [stats, groupes, offres, classement]);
+  }, [stats, groupesAvecDepots, offres, scores, classements, maintenant]);
 
   const criteresOffre = useMemo(
     () => (offre ? criteresPourAppel(criteresTous, getIdAppel(offre)) : []),
@@ -552,6 +543,19 @@ export default function EvaluateurPage() {
     () => calculerScore(notesSaisie, criteresOffre),
     [notesSaisie, criteresOffre]
   );
+
+  const aTransmettre = useMemo(
+    () =>
+      groupesAvecDepots.filter(
+        (g) => (classements[g.id]?.classes.length || 0) > 0 && !estTransmis(g)
+      ).length,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [groupesAvecDepots, classements, transmis]
+  );
+
+  function estTransmis(g) {
+    return !!(transmis[g.id] || appelsTransmis.includes(Number(g.id)));
+  }
 
   /* ---------- Ouvrir / fermer la fenêtre d'évaluation ---------- */
 
@@ -614,7 +618,16 @@ export default function EvaluateurPage() {
   function navigateTo(tab) {
     closeOffre();
     setActiveTab(tab);
+    setSelectedAppelId(null);
     setMobileMenu(false);
+    setNotice({ type: "", message: "" });
+  }
+
+  function selectAppel(id, tab = "soumissionnaires") {
+    setSelectedAppelId(id);
+    setAppelTab(tab);
+    setSearch("");
+    setStatutFilter("TOUS");
     setNotice({ type: "", message: "" });
   }
 
@@ -637,11 +650,7 @@ export default function EvaluateurPage() {
       setPreview({
         doc,
         url,
-        kind: type.startsWith("image/")
-          ? "image"
-          : type.includes("pdf")
-          ? "pdf"
-          : "other",
+        kind: type.startsWith("image/") ? "image" : type.includes("pdf") ? "pdf" : "other",
       });
     } catch (error) {
       showNotice("error", error.message || "Aperçu impossible.");
@@ -718,7 +727,7 @@ export default function EvaluateurPage() {
       const liste = await loadDashboard();
       const maj = liste?.find((o) => getIdOffre(o) === getIdOffre(offre));
       if (maj) setOffre(maj);
-      showNotice("success", "Évaluation enregistrée avec succès.");
+      showNotice("success", "Évaluation enregistrée. Le classement de l'appel d'offres a été mis à jour.");
     } catch (error) {
       showNotice("error", error.message || "Enregistrement impossible.");
     } finally {
@@ -730,9 +739,7 @@ export default function EvaluateurPage() {
     const saved = notesSauvees.find((n) => Number(n.idCritere) === Number(idCritere));
     if (!saved?.idNoter) return;
 
-    if (!window.confirm("Supprimer cette note ? Cette action est irréversible.")) {
-      return;
-    }
+    if (!window.confirm("Supprimer cette note ? Cette action est irréversible.")) return;
 
     setDeletingId(saved.idNoter);
 
@@ -747,6 +754,81 @@ export default function EvaluateurPage() {
       showNotice("error", error.message || "Suppression impossible.");
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  /* ---------- Sélection des offres à transmettre ---------- */
+
+  function toggleSelection(idAppel, idOffre) {
+    setSelection((p) => {
+      const actuel = p[idAppel] || [];
+      const suivant = actuel.includes(idOffre)
+        ? actuel.filter((x) => x !== idOffre)
+        : [...actuel, idOffre];
+      return { ...p, [idAppel]: suivant };
+    });
+  }
+
+  function selectionnerTout(idAppel, ids) {
+    setSelection((p) => ({ ...p, [idAppel]: ids }));
+  }
+
+  function viderSelection(idAppel) {
+    setSelection((p) => ({ ...p, [idAppel]: [] }));
+  }
+
+  /* ---------- Transmission au Responsable des marchés (par appel d'offres) ---------- */
+
+  async function transmettreClassement(g) {
+    const c = classements[g.id];
+    if (!c || estTransmis(g) || transmitting) return;
+
+    // Seules les offres classées ET cochées sont transmises (ordre du classement)
+    const cochees = selection[g.id] || [];
+    const retenues = c.classes.filter((x) => cochees.includes(getIdOffre(x.offre)));
+
+    if (retenues.length === 0) {
+      showNotice("error", "Sélectionnez au moins une offre à transmettre.");
+      return;
+    }
+
+    const ref = g.appel?.reference || `#${g.id}`;
+    const avert = c.pret
+      ? ""
+      : `\n\nAttention : ${c.total - c.classes.length} offre(s) de cet appel ne sont pas encore évaluées complètement.`;
+
+    if (
+      !window.confirm(
+        `Transmettre ${retenues.length} offre(s) de l'appel d'offres ${ref} au Responsable des marchés pour publication ?${avert}`
+      )
+    ) {
+      return;
+    }
+
+    setTransmitting(g.id);
+    setNotice({ type: "", message: "" });
+
+    try {
+      await apiRequest(TRANSMETTRE_URL, {
+        method: "POST",
+        body: JSON.stringify({
+          idAppelOffre: Number(g.id),
+          classement: retenues.map((x) => ({
+            idOffre: Number(getIdOffre(x.offre)),
+            rang: x.rang,
+            note: Number(x.res.score.toFixed(2)),
+          })),
+        }),
+      });
+      setTransmis((p) => ({ ...p, [g.id]: new Date().toISOString() }));
+      showNotice(
+        "success",
+        `${retenues.length} offre(s) de ${ref} transmise(s) au Responsable des marchés.`
+      );
+    } catch (error) {
+      showNotice("error", error.message || "Transmission impossible.");
+    } finally {
+      setTransmitting(null);
     }
   }
 
@@ -774,15 +856,24 @@ export default function EvaluateurPage() {
     <div className={`ev-notice ${notice.type}`} role="alert">
       {notice.type === "success" ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
       <p>{notice.message}</p>
-      <button
-        type="button"
-        onClick={() => setNotice({ type: "", message: "" })}
-        aria-label="Fermer"
-      >
+      <button type="button" onClick={() => setNotice({ type: "", message: "" })} aria-label="Fermer">
         <X size={15} />
       </button>
     </div>
   ) : null;
+
+  const rankingProps = {
+    onOpen: openOffre,
+    onTransmit: transmettreClassement,
+    selection,
+    onToggle: toggleSelection,
+    onSelectAll: selectionnerTout,
+    onClear: viderSelection,
+    detailLoading,
+    transmitting,
+    estTransmis,
+    dateTransmission: (g) => transmis[g.id],
+  };
 
   return (
     <main className="ev-app">
@@ -816,6 +907,9 @@ export default function EvaluateurPage() {
               {label}
               {id === "appels" && stats.aEvaluer > 0 && (
                 <span className="ev-nav-badge">{stats.aEvaluer}</span>
+              )}
+              {id === "classement" && aTransmettre > 0 && (
+                <span className="ev-nav-badge">{aTransmettre}</span>
               )}
             </button>
           ))}
@@ -857,12 +951,7 @@ export default function EvaluateurPage() {
             <h1>{NAV.find((n) => n.id === activeTab)?.label}</h1>
           </div>
 
-          <button
-            type="button"
-            className="ev-btn ev-btn-ghost"
-            onClick={loadDashboard}
-            disabled={loading}
-          >
+          <button type="button" className="ev-btn ev-btn-ghost" onClick={loadDashboard} disabled={loading}>
             <RefreshCw size={16} className={loading ? "ev-spin" : ""} />
             Actualiser
           </button>
@@ -881,7 +970,7 @@ export default function EvaluateurPage() {
               <Stat
                 icon={Gauge}
                 label="Note moyenne"
-                value={dash.moyenne != null ? `${formatScore(dash.moyenne)}` : "—"}
+                value={dash.moyenne != null ? formatScore(dash.moyenne) : "—"}
                 suffix={dash.moyenne != null ? "/ 20" : ""}
               />
             </section>
@@ -936,29 +1025,29 @@ export default function EvaluateurPage() {
               <section className="ev-card ev-chart-card ev-span-2">
                 <div className="ev-card-head">
                   <div>
-                    <h3>Meilleures notes</h3>
-                    <p>Top 5 des offres notées (note pondérée sur 20)</p>
+                    <h3>Meilleure offre de chaque appel d'offres</h3>
+                    <p>Premier de chaque classement (note pondérée sur 20)</p>
                   </div>
                 </div>
-                {dash.top.length === 0 ? (
-                  <p className="ev-empty-inline">Aucune offre notée pour le moment.</p>
+                {dash.leaders.length === 0 ? (
+                  <p className="ev-empty-inline">Aucune évaluation complète pour le moment.</p>
                 ) : (
                   <div className="ev-hbars">
-                    {dash.top.map(({ offre: o, res }) => (
-                      <div className="ev-hbar" key={getIdOffre(o)}>
+                    {dash.leaders.map(({ g, premier }) => (
+                      <div className="ev-hbar" key={g.id}>
                         <div className="ev-hbar-label">
-                          <strong>{nomSoumissionnaire(o)}</strong>
-                          <small>{getAppel(o).reference}</small>
+                          <strong>{nomSoumissionnaire(premier.offre)}</strong>
+                          <small>{g.appel?.reference}</small>
                         </div>
                         <div className="ev-hbar-track">
                           <i
                             style={{
-                              width: `${Math.min(100, (res.score / 20) * 100)}%`,
-                              background: res.complet ? COLORS.done : COLORS.progress,
+                              width: `${Math.min(100, (premier.res.score / 20) * 100)}%`,
+                              background: classements[g.id]?.pret ? COLORS.done : COLORS.progress,
                             }}
                           />
                         </div>
-                        <span className="ev-hbar-value">{formatScore(res.score)}</span>
+                        <span className="ev-hbar-value">{formatScore(premier.res.score)}</span>
                       </div>
                     ))}
                   </div>
@@ -968,44 +1057,18 @@ export default function EvaluateurPage() {
           </>
         )}
 
-        {/* ================= APPELS D'OFFRES ================= */}
-        {activeTab === "appels" && (
+        {/* ================= APPELS D'OFFRES : LISTE ================= */}
+        {activeTab === "appels" && !appelSelectionne && (
           <>
             <section className="ev-card ev-list-card ev-filters-card">
-              <div className="ev-toolbar">
-                <div className="ev-search">
-                  <Search size={17} />
-                  <input
-                    type="search"
-                    placeholder="Rechercher : appel d'offres, soumissionnaire, NIF, email…"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                  />
+              <div className="ev-card-head ev-pad">
+                <div>
+                  <h3>Sélectionnez un appel d'offres</h3>
+                  <p>
+                    Vous évaluerez uniquement les soumissionnaires ayant déposé une offre pour
+                    l'appel choisi. Chaque appel a son propre classement.
+                  </p>
                 </div>
-
-                <select
-                  value={appelFilter}
-                  onChange={(e) => setAppelFilter(e.target.value)}
-                  aria-label="Filtrer par appel d'offres"
-                >
-                  <option value="TOUS">Tous les appels d'offres</option>
-                  {groupes.map((g) => (
-                    <option key={g.id} value={g.id}>
-                      {g.appel?.reference || `#${g.id}`}
-                    </option>
-                  ))}
-                </select>
-
-                <select
-                  value={statutFilter}
-                  onChange={(e) => setStatutFilter(e.target.value)}
-                  aria-label="Filtrer par statut"
-                >
-                  <option value="TOUS">Tous les statuts</option>
-                  <option value="DEPOSEE">À évaluer</option>
-                  <option value="EN_EVALUATION">En cours</option>
-                  <option value="EVALUEE">Évaluées</option>
-                </select>
               </div>
             </section>
 
@@ -1016,251 +1079,233 @@ export default function EvaluateurPage() {
                   Chargement des appels d'offres…
                 </div>
               </div>
-            ) : groupesFiltres.length === 0 ? (
+            ) : groupes.length === 0 ? (
               <div className="ev-card">
                 <div className="ev-empty">
                   <FolderOpen size={34} />
-                  <h3>Aucun appel d'offres trouvé</h3>
+                  <h3>Aucun appel d'offres</h3>
                   <p>Les appels d'offres et les dépôts apparaissent ici.</p>
                 </div>
               </div>
             ) : (
               <div className="ev-appels">
-                {groupesFiltres.map((g) => {
-                  const appel = g.appel || {};
-                  const photos = photosParAppel[g.id] || [];
-                  const info = appelStatutInfo(appel);
-                  const ferme = !!fermes[g.id];
-                  const nbEval = g.offres.filter((o) => statutOf(o) === "EVALUEE").length;
-
-                  return (
-                    <article className="ev-appel" key={g.id}>
-                      <div className="ev-appel-top">
-                        {/* Images en haut */}
-                        <div className="ev-appel-cover">
-                          {photos.length > 0 ? (
-                            <div className={`ev-gallery g${Math.min(photos.length, 4)}`}>
-                              {photos.slice(0, 4).map((p, i) => (
-                                <button
-                                  type="button"
-                                  key={p.idPhoto ?? i}
-                                  onClick={() => setZoom(photoUrl(p))}
-                                  aria-label="Agrandir la photo"
-                                >
-                                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                                  <img
-                                    src={photoUrl(p)}
-                                    alt={p.nomFichier || "Photo de l'appel d'offres"}
-                                    loading="lazy"
-                                  />
-                                </button>
-                              ))}
-                            </div>
-                          ) : (
-                            <div className="ev-cover-empty">
-                              <ImageOff size={30} />
-                              <span>Aucune photo publiée</span>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Contenu de l'appel d'offres publié */}
-                        <div className="ev-appel-info">
-                          <div className="ev-appel-line">
-                            <span className="ev-ref">{appel.reference || "—"}</span>
-                            <span className={`ev-chip ${info.tone}`}>{info.label}</span>
-                          </div>
-                          <h3>{appel.objet || "Appel d'offres"}</h3>
-                          {appel.description && (
-                            <p className="ev-appel-desc">{appel.description}</p>
-                          )}
-
-                          <div className="ev-appel-meta">
-                            <span>
-                              <MapPin size={14} />
-                              {appel.lieuExecution || "Lieu non précisé"}
-                            </span>
-                            <span>
-                              <CalendarDays size={14} />
-                              Limite : {formatDate(appel.dateLimiteDepot)}
-                            </span>
-                          </div>
-
-                          <div className="ev-appel-counters">
-                            <div>
-                              <strong>{g.offres.length}</strong>
-                              <span>offre(s) reçue(s)</span>
-                            </div>
-                            <div>
-                              <strong>{nbEval}</strong>
-                              <span>évaluée(s)</span>
-                            </div>
-                            <div>
-                              <strong>
-                                {g.offres.length
-                                  ? Math.round((nbEval / g.offres.length) * 100)
-                                  : 0}
-                                %
-                              </strong>
-                              <span>d'avancement</span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Liste des soumissionnaires en bas */}
-                      <div className="ev-appel-list">
-                        <button
-                          type="button"
-                          className="ev-appel-toggle"
-                          onClick={() => setFermes((p) => ({ ...p, [g.id]: !p[g.id] }))}
-                          aria-expanded={!ferme}
-                        >
-                          <Users size={17} />
-                          <strong>Soumissionnaires ayant déposé une offre</strong>
-                          <span className="ev-count">{g.offresFiltrees.length}</span>
-                          <ChevronDown size={18} className={ferme ? "" : "ev-rot"} />
-                        </button>
-
-                        {!ferme &&
-                          (g.offresFiltrees.length === 0 ? (
-                            <p className="ev-empty-inline ev-m">
-                              Aucun dépôt pour cet appel d'offres.
-                            </p>
-                          ) : (
-                            <div className="ev-table-wrap">
-                              <table className="ev-table">
-                                <thead>
-                                  <tr>
-                                    <th>Soumissionnaire</th>
-                                    <th>Contact</th>
-                                    <th>Déposée le</th>
-                                    <th>Statut</th>
-                                    <th>Note</th>
-                                    <th />
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {g.offresFiltrees.map((o) => {
-                                    const res = scores[getIdOffre(o)];
-                                    const st = statutInfo(o);
-                                    return (
-                                      <tr key={getIdOffre(o)}>
-                                        <td>
-                                          <strong className="ev-cell-name">
-                                            {nomSoumissionnaire(o)}
-                                          </strong>
-                                          <small>{typeLabel(o)}</small>
-                                        </td>
-                                        <td>
-                                          <span className="ev-cell-line">{o.email || "—"}</span>
-                                          <small>{o.telephone || ""}</small>
-                                        </td>
-                                        <td>{formatDate(o.dateDepot)}</td>
-                                        <td>
-                                          <span className={`ev-chip ${st.tone}`}>{st.label}</span>
-                                        </td>
-                                        <td>
-                                          {res ? (
-                                            <span className="ev-cell-score">
-                                              <strong>{formatScore(res.score)}</strong> / 20
-                                              {!res.complet && (
-                                                <small>
-                                                  {res.nombreNotes}/{res.totalCriteres} critères
-                                                </small>
-                                              )}
-                                            </span>
-                                          ) : (
-                                            <span className="ev-muted">Non noté</span>
-                                          )}
-                                        </td>
-                                        <td className="ev-cell-action">
-                                          <button
-                                            type="button"
-                                            className="ev-btn ev-btn-primary ev-btn-sm"
-                                            onClick={() => openOffre(o)}
-                                            disabled={detailLoading}
-                                          >
-                                            Évaluer
-                                            <ChevronRight size={15} />
-                                          </button>
-                                        </td>
-                                      </tr>
-                                    );
-                                  })}
-                                </tbody>
-                              </table>
-                            </div>
-                          ))}
-                      </div>
-                    </article>
-                  );
-                })}
+                {groupes.map((g) => (
+                  <AppelCard
+                    key={g.id}
+                    g={g}
+                    photos={photosParAppel[g.id] || []}
+                    classement={classements[g.id]}
+                    transmis={estTransmis(g)}
+                    onZoom={setZoom}
+                    onSelect={() => selectAppel(g.id)}
+                  />
+                ))}
               </div>
             )}
           </>
         )}
 
-        {/* ================= CLASSEMENT ================= */}
-        {activeTab === "classement" && (
-          <section className="ev-card ev-list-card">
-            <div className="ev-card-head ev-pad">
-              <div>
-                <h3>Classement des offres notées</h3>
-                <p>
-                  Les évaluations complètes passent en premier, puis tri par note pondérée
-                  décroissante.
-                </p>
+        {/* ================= APPELS D'OFFRES : DÉTAIL D'UN APPEL ================= */}
+        {activeTab === "appels" && appelSelectionne && (
+          <>
+            <section className="ev-appel ev-appel-head">
+              <div className="ev-appel-top">
+                <div className="ev-appel-info">
+                  <button
+                    type="button"
+                    className="ev-btn ev-btn-ghost ev-btn-sm"
+                    onClick={() => setSelectedAppelId(null)}
+                  >
+                    <ChevronLeft size={15} />
+                    Tous les appels d'offres
+                  </button>
+                  <div className="ev-appel-line">
+                    <span className="ev-ref">{appelSelectionne.appel?.reference || "—"}</span>
+                    <span className={`ev-chip ${appelStatutInfo(appelSelectionne.appel).tone}`}>
+                      {appelStatutInfo(appelSelectionne.appel).label}
+                    </span>
+                  </div>
+                  <h3>{appelSelectionne.appel?.objet || "Appel d'offres"}</h3>
+                  <div className="ev-appel-meta">
+                    <span>
+                      <MapPin size={14} />
+                      {appelSelectionne.appel?.lieuExecution || "Lieu non précisé"}
+                    </span>
+                    <span>
+                      <CalendarDays size={14} />
+                      Limite : {formatDate(appelSelectionne.appel?.dateLimiteDepot)}
+                    </span>
+                  </div>
+                </div>
               </div>
+            </section>
+
+            <div className="ev-segment ev-tabs">
+              <button
+                type="button"
+                className={appelTab === "soumissionnaires" ? "active" : ""}
+                onClick={() => setAppelTab("soumissionnaires")}
+              >
+                Soumissionnaires ({appelSelectionne.offres.length})
+              </button>
+              <button
+                type="button"
+                className={appelTab === "classement" ? "active" : ""}
+                onClick={() => setAppelTab("classement")}
+              >
+                Classement
+              </button>
             </div>
 
-            {loading ? (
-              <div className="ev-loading">
-                <span className="ev-loader" />
-                Calcul du classement…
+            {appelTab === "soumissionnaires" && (
+              <section className="ev-card ev-list-card">
+                <div className="ev-toolbar">
+                  <div className="ev-search">
+                    <Search size={17} />
+                    <input
+                      type="search"
+                      placeholder="Rechercher : soumissionnaire, NIF, email…"
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                    />
+                  </div>
+                  <select
+                    value={statutFilter}
+                    onChange={(e) => setStatutFilter(e.target.value)}
+                    aria-label="Filtrer par statut"
+                  >
+                    <option value="TOUS">Tous les statuts</option>
+                    <option value="DEPOSEE">À évaluer</option>
+                    <option value="EN_EVALUATION">En cours</option>
+                    <option value="EVALUEE">Évaluées</option>
+                  </select>
+                </div>
+
+                {offresFiltrees.length === 0 ? (
+                  <p className="ev-empty-inline ev-m">
+                    Aucun soumissionnaire n'a déposé d'offre pour cet appel d'offres.
+                  </p>
+                ) : (
+                  <div className="ev-table-wrap">
+                    <table className="ev-table">
+                      <thead>
+                        <tr>
+                          <th>Soumissionnaire</th>
+                          <th>Contact</th>
+                          <th>Déposée le</th>
+                          <th>Statut</th>
+                          <th>Note</th>
+                          <th />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {offresFiltrees.map((o) => {
+                          const res = scores[getIdOffre(o)];
+                          const st = statutInfo(o);
+                          return (
+                            <tr key={getIdOffre(o)}>
+                              <td>
+                                <strong className="ev-cell-name">{nomSoumissionnaire(o)}</strong>
+                                <small>{typeLabel(o)}</small>
+                              </td>
+                              <td>
+                                <span className="ev-cell-line">{o.email || "—"}</span>
+                                <small>{o.telephone || ""}</small>
+                              </td>
+                              <td>{formatDate(o.dateDepot)}</td>
+                              <td>
+                                <span className={`ev-chip ${st.tone}`}>{st.label}</span>
+                              </td>
+                              <td>
+                                {res ? (
+                                  <span className="ev-cell-score">
+                                    <strong>{formatScore(res.score)}</strong> / 20
+                                    {!res.complet && (
+                                      <small>
+                                        {res.nombreNotes}/{res.totalCriteres} critères
+                                      </small>
+                                    )}
+                                  </span>
+                                ) : (
+                                  <span className="ev-muted">Non noté</span>
+                                )}
+                              </td>
+                              <td className="ev-cell-action">
+                                <button
+                                  type="button"
+                                  className="ev-btn ev-btn-primary ev-btn-sm"
+                                  onClick={() => openOffre(o)}
+                                  disabled={detailLoading}
+                                >
+                                  Évaluer
+                                  <ChevronRight size={15} />
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+            )}
+
+            {appelTab === "classement" && (
+              <RankingPanel
+                g={appelSelectionne}
+                classement={classements[appelSelectionne.id]}
+                {...rankingProps}
+              />
+            )}
+          </>
+        )}
+
+        {/* ================= CLASSEMENT (un appel d'offres à la fois) ================= */}
+        {activeTab === "classement" && (
+          <>
+            <section className="ev-card ev-list-card ev-filters-card">
+              <div className="ev-toolbar">
+                <select
+                  value={classementGroupe ? String(classementGroupe.id) : ""}
+                  className="ev-select-wide"
+                  onChange={(e) => setClassementAppelId(e.target.value)}
+                  aria-label="Choisir un appel d'offres"
+                  disabled={groupesAvecDepots.length === 0}
+                >
+                  {groupesAvecDepots.length === 0 && <option value="">Aucun appel avec dépôts</option>}
+                  {groupesAvecDepots.map((g) => (
+                    <option key={g.id} value={g.id}>
+                      {g.appel?.reference || `#${g.id}`} — {g.appel?.objet || "Appel d'offres"}
+                    </option>
+                  ))}
+                </select>
               </div>
-            ) : classement.length === 0 ? (
-              <div className="ev-empty">
-                <Trophy size={34} />
-                <h3>Aucune offre notée</h3>
-                <p>Le classement apparaîtra dès que des notes seront enregistrées.</p>
+            </section>
+
+            {loading ? (
+              <div className="ev-card">
+                <div className="ev-loading">
+                  <span className="ev-loader" />
+                  Calcul du classement…
+                </div>
+              </div>
+            ) : !classementGroupe ? (
+              <div className="ev-card">
+                <div className="ev-empty">
+                  <Trophy size={34} />
+                  <h3>Aucun dépôt reçu</h3>
+                  <p>Le classement apparaît pour chaque appel d'offres ayant reçu des dépôts.</p>
+                </div>
               </div>
             ) : (
-              <ol className="ev-ranking">
-                {classement.map(({ offre: o, res }, i) => (
-                  <li key={getIdOffre(o)} className={res.complet && i === 0 ? "first" : ""}>
-                    <span className="ev-rank">
-                      {res.complet && i < 3 ? <Medal size={20} /> : i + 1}
-                    </span>
-                    <div className="ev-rank-info">
-                      <strong>{nomSoumissionnaire(o)}</strong>
-                      <small>
-                        {getAppel(o).reference} · {getAppel(o).objet}
-                      </small>
-                      <span className={`ev-chip ${res.complet ? "done" : "progress"}`}>
-                        {res.complet
-                          ? "Évaluation complète"
-                          : `Partielle ${res.nombreNotes}/${res.totalCriteres}`}
-                      </span>
-                    </div>
-                    <div className="ev-rank-score">
-                      <strong>{formatScore(res.score)}</strong>
-                      <span>/ 20</span>
-                    </div>
-                    <button
-                      type="button"
-                      className="ev-btn ev-btn-soft"
-                      onClick={() => openOffre(o)}
-                      disabled={detailLoading}
-                    >
-                      Ouvrir
-                      <ChevronRight size={15} />
-                    </button>
-                  </li>
-                ))}
-              </ol>
+              <RankingPanel
+                g={classementGroupe}
+                classement={classements[classementGroupe.id]}
+                {...rankingProps}
+              />
             )}
-          </section>
+          </>
         )}
 
         {/* ================= POP-UP D'EVALUATION ================= */}
@@ -1271,26 +1316,16 @@ export default function EvaluateurPage() {
               if (e.target === e.currentTarget && !saving) closeOffre();
             }}
           >
-            <section
-              className="ev-modal"
-              role="dialog"
-              aria-modal="true"
-              aria-label="Évaluation du dossier"
-            >
+            <section className="ev-modal" role="dialog" aria-modal="true" aria-label="Évaluation du dossier">
               <header className="ev-modal-head">
                 <div className="ev-modal-title">
                   <div className="ev-hero-top">
-                    <span className="ev-ref">
-                      {getAppel(offre).reference || "Appel d'offres"}
-                    </span>
-                    <span className={`ev-chip ${statutInfo(offre).tone}`}>
-                      {statutInfo(offre).label}
-                    </span>
+                    <span className="ev-ref">{getAppel(offre).reference || "Appel d'offres"}</span>
+                    <span className={`ev-chip ${statutInfo(offre).tone}`}>{statutInfo(offre).label}</span>
                   </div>
                   <h2>{nomSoumissionnaire(offre)}</h2>
                   <p>
-                    {getAppel(offre).objet || "Offre à évaluer"} · déposée le{" "}
-                    {formatDate(offre.dateDepot)}
+                    {getAppel(offre).objet || "Offre à évaluer"} · déposée le {formatDate(offre.dateDepot)}
                   </p>
                 </div>
 
@@ -1330,7 +1365,6 @@ export default function EvaluateurPage() {
               <div className="ev-modal-scroll">
                 {noticeBox}
 
-                {/* Onglets mobiles */}
                 <div className="ev-segment ev-only-mobile-flex">
                   <button
                     type="button"
@@ -1355,9 +1389,7 @@ export default function EvaluateurPage() {
                       <h3>Soumissionnaire</h3>
                       <dl className="ev-facts">
                         <Fact icon={Building2} label="Profil" value={typeLabel(offre)} />
-                        {offre.entreprise && (
-                          <Fact icon={Building2} label="Entreprise" value={offre.entreprise} />
-                        )}
+                        {offre.entreprise && <Fact icon={Building2} label="Entreprise" value={offre.entreprise} />}
                         {offre.nomSoumissionnaire && (
                           <Fact icon={UserRound} label="Nom et prénom" value={offre.nomSoumissionnaire} />
                         )}
@@ -1394,20 +1426,10 @@ export default function EvaluateurPage() {
                                     {doc.categorie} · {doc.nomFichier}
                                   </small>
                                 </div>
-                                <button
-                                  type="button"
-                                  className="ev-icon-btn"
-                                  title="Aperçu"
-                                  onClick={() => previewDocument(doc)}
-                                >
+                                <button type="button" className="ev-icon-btn" title="Aperçu" onClick={() => previewDocument(doc)}>
                                   <Eye size={17} />
                                 </button>
-                                <button
-                                  type="button"
-                                  className="ev-icon-btn"
-                                  title="Télécharger"
-                                  onClick={() => downloadDocument(doc)}
-                                >
+                                <button type="button" className="ev-icon-btn" title="Télécharger" onClick={() => downloadDocument(doc)}>
                                   <Download size={17} />
                                 </button>
                               </li>
@@ -1422,12 +1444,7 @@ export default function EvaluateurPage() {
                         <div className="ev-card-head">
                           <h3>{preview?.doc?.libelle || "Chargement…"}</h3>
                           {preview && (
-                            <button
-                              type="button"
-                              className="ev-icon-btn"
-                              onClick={resetPreview}
-                              aria-label="Fermer l'aperçu"
-                            >
+                            <button type="button" className="ev-icon-btn" onClick={resetPreview} aria-label="Fermer l'aperçu">
                               <X size={17} />
                             </button>
                           )}
@@ -1468,17 +1485,13 @@ export default function EvaluateurPage() {
                       </div>
 
                       {criteresOffre.length === 0 ? (
-                        <p className="ev-empty-inline">
-                          Aucun critère n'est configuré pour cet appel d'offres.
-                        </p>
+                        <p className="ev-empty-inline">Aucun critère n'est configuré pour cet appel d'offres.</p>
                       ) : (
                         <div className="ev-criteria">
                           {criteresOffre.map((row) => {
                             const id = critId(row);
                             const valeur = notesSaisie[id] ?? "";
-                            const saved = notesSauvees.find(
-                              (n) => Number(n.idCritere) === Number(id)
-                            );
+                            const saved = notesSauvees.find((n) => Number(n.idCritere) === Number(id));
                             const description = critDescription(row);
 
                             return (
@@ -1521,9 +1534,7 @@ export default function EvaluateurPage() {
                                 <textarea
                                   rows={2}
                                   value={commentaires[id] ?? ""}
-                                  onChange={(e) =>
-                                    setCommentaires((p) => ({ ...p, [id]: e.target.value }))
-                                  }
+                                  onChange={(e) => setCommentaires((p) => ({ ...p, [id]: e.target.value }))}
                                   placeholder="Justification (facultatif)"
                                   disabled={saving}
                                 />
@@ -1559,9 +1570,7 @@ export default function EvaluateurPage() {
                       <div className="ev-savebar">
                         <div>
                           <span>Note pondérée</span>
-                          <strong>
-                            {scoreLive ? formatScore(scoreLive.score) : "—"} / 20
-                          </strong>
+                          <strong>{scoreLive ? formatScore(scoreLive.score) : "—"} / 20</strong>
                         </div>
                         <button type="submit" className="ev-btn ev-btn-primary" disabled={saving}>
                           {saving ? (
@@ -1588,12 +1597,7 @@ export default function EvaluateurPage() {
         {/* ================= AGRANDISSEMENT D'UNE PHOTO ================= */}
         {zoom && (
           <div className="ev-lightbox" onClick={() => setZoom(null)}>
-            <button
-              type="button"
-              className="ev-icon-btn"
-              onClick={() => setZoom(null)}
-              aria-label="Fermer"
-            >
+            <button type="button" className="ev-icon-btn" onClick={() => setZoom(null)} aria-label="Fermer">
               <X size={22} />
             </button>
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1633,6 +1637,290 @@ function Stat({ icon: Icon, label, value, suffix, tone = "" }) {
         {suffix && <small> {suffix}</small>}
       </strong>
     </article>
+  );
+}
+
+/* ---------- Carte d'un appel d'offres (liste) ---------- */
+function AppelCard({ g, photos, classement, transmis, onZoom, onSelect }) {
+  const appel = g.appel || {};
+  const info = appelStatutInfo(appel);
+  const nbEval = g.offres.filter((o) => statutOf(o) === "EVALUEE").length;
+  const pct = g.offres.length ? Math.round((nbEval / g.offres.length) * 100) : 0;
+
+  return (
+    <article className="ev-appel">
+      <div className="ev-appel-top">
+        <div className="ev-appel-cover">
+          {photos.length > 0 ? (
+            <div className={`ev-gallery g${Math.min(photos.length, 4)}`}>
+              {photos.slice(0, 4).map((p, i) => (
+                <button
+                  type="button"
+                  key={p.idPhoto ?? i}
+                  onClick={() => onZoom(photoUrl(p))}
+                  aria-label="Agrandir la photo"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={photoUrl(p)} alt={p.nomFichier || "Photo de l'appel d'offres"} loading="lazy" />
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="ev-cover-empty">
+              <ImageOff size={30} />
+              <span>Aucune photo publiée</span>
+            </div>
+          )}
+        </div>
+
+        <div className="ev-appel-info">
+          <div className="ev-appel-line">
+            <span className="ev-ref">{appel.reference || "—"}</span>
+            <span className={`ev-chip ${info.tone}`}>{info.label}</span>
+            {transmis && <span className="ev-chip done">Transmis</span>}
+          </div>
+          <h3>{appel.objet || "Appel d'offres"}</h3>
+          {appel.description && <p className="ev-appel-desc">{appel.description}</p>}
+
+          <div className="ev-appel-meta">
+            <span>
+              <MapPin size={14} />
+              {appel.lieuExecution || "Lieu non précisé"}
+            </span>
+            <span>
+              <CalendarDays size={14} />
+              Limite : {formatDate(appel.dateLimiteDepot)}
+            </span>
+          </div>
+
+          <div className="ev-appel-counters">
+            <div>
+              <strong>{g.offres.length}</strong>
+              <span>offre(s) reçue(s)</span>
+            </div>
+            <div>
+              <strong>{nbEval}</strong>
+              <span>évaluée(s)</span>
+            </div>
+            <div>
+              <strong>{pct}%</strong>
+              <span>d'avancement</span>
+            </div>
+          </div>
+
+          <div className="ev-appel-line">
+            <button
+              type="button"
+              className="ev-btn ev-btn-primary ev-btn-sm"
+              onClick={onSelect}
+              disabled={g.offres.length === 0}
+            >
+              {g.offres.length === 0 ? "Aucun dépôt" : "Sélectionner et évaluer"}
+              {g.offres.length > 0 && <ChevronRight size={15} />}
+            </button>
+            {classement?.pret && !transmis && (
+              <span className="ev-chip progress">Classement prêt</span>
+            )}
+          </div>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+/* ---------- Classement d'UN appel d'offres + sélection + transmission ---------- */
+function RankingPanel({
+  g, classement, selection, onToggle, onSelectAll, onClear,
+  onOpen, onTransmit, detailLoading, transmitting, estTransmis, dateTransmission,
+}) {
+  if (!g || !classement) return null;
+
+  const { classes, partiels, nonNotees, total, pret } = classement;
+  const transmisOk = estTransmis(g);
+  const date = dateTransmission(g);
+  const enCours = transmitting === g.id;
+  const ref = g.appel?.reference || `#${g.id}`;
+
+  const idsClasses = classes.map((x) => getIdOffre(x.offre));
+  const choisis = (selection?.[g.id] || []).filter((id) => idsClasses.includes(id));
+  const nb = choisis.length;
+  const toutCoche = idsClasses.length > 0 && nb === idsClasses.length;
+
+  let aide = "";
+  if (transmisOk) {
+    aide = `Sélection transmise au Responsable des marchés${
+      date && typeof date === "string" && date.length > 5 ? ` le ${formatDate(date)}` : ""
+    }.`;
+  } else if (nb === 0) {
+    aide = "Cochez une ou plusieurs offres classées à transmettre.";
+  } else {
+    aide = `${nb} offre(s) sélectionnée(s) sur ${classes.length} classée(s).`;
+  }
+  if (!transmisOk && !pret && classes.length > 0) {
+    aide += ` ${total - classes.length} offre(s) pas encore évaluée(s) complètement.`;
+  }
+
+  return (
+    <section className="ev-card ev-list-card">
+      <div className="ev-card-head ev-pad">
+        <div>
+          <h3>Classement — {ref}</h3>
+          <p>
+            {g.appel?.objet || "Appel d'offres"} · {total} soumissionnaire(s). Ce classement est
+            indépendant de ceux des autres appels d'offres.
+          </p>
+        </div>
+        <span className={`ev-chip ${transmisOk || pret ? "done" : "progress"}`}>
+          {transmisOk ? "Transmis" : pret ? "Évaluation terminée" : "En cours d'évaluation"}
+        </span>
+      </div>
+
+      {classes.length === 0 && partiels.length === 0 ? (
+        <div className="ev-empty">
+          <Trophy size={34} />
+          <h3>Aucune offre notée</h3>
+          <p>Évaluez les soumissionnaires de cet appel d'offres pour générer le classement.</p>
+        </div>
+      ) : (
+        <>
+          {classes.length > 0 && (
+            <div className="ev-select-bar">
+              <span>
+                <strong>{nb}</strong> / {classes.length} sélectionnée(s)
+              </span>
+              {!transmisOk && (
+                <div>
+                  <button
+                    type="button"
+                    className="ev-link-btn"
+                    onClick={() => onSelectAll(g.id, idsClasses)}
+                    disabled={toutCoche}
+                  >
+                    Tout sélectionner
+                  </button>
+                  <button
+                    type="button"
+                    className="ev-link-btn"
+                    onClick={() => onClear(g.id)}
+                    disabled={nb === 0}
+                  >
+                    Tout désélectionner
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          <ol className="ev-ranking">
+            {classes.map(({ offre: o, res, rang }) => {
+              const id = getIdOffre(o);
+              const coche = choisis.includes(id);
+              return (
+                <li
+                  key={id}
+                  className={`${rang === 1 ? "first" : ""} ${coche ? "selected" : ""}`}
+                >
+                  <button
+                    type="button"
+                    className={`ev-check ${coche ? "on" : ""}`}
+                    role="checkbox"
+                    aria-checked={coche}
+                    aria-label={`${coche ? "Désélectionner" : "Sélectionner"} ${nomSoumissionnaire(o)}`}
+                    onClick={() => onToggle(g.id, id)}
+                    disabled={transmisOk}
+                  >
+                    {coche && <Check size={14} strokeWidth={3} />}
+                  </button>
+                  <span className="ev-rank">{rang <= 3 ? <Medal size={20} /> : rang}</span>
+                  <div className="ev-rank-info">
+                    <strong>
+                      {rang <= 3 ? `${rang}${rang === 1 ? "er" : "e"} · ` : ""}
+                      {nomSoumissionnaire(o)}
+                    </strong>
+                    <small>{typeLabel(o)} · déposée le {formatDate(o.dateDepot)}</small>
+                    <span className="ev-chip done">Évaluation complète</span>
+                  </div>
+                  <div className="ev-rank-score">
+                    <strong>{formatScore(res.score)}</strong>
+                    <span>/ 20</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="ev-btn ev-btn-soft"
+                    onClick={() => onOpen(o)}
+                    disabled={detailLoading}
+                  >
+                    Ouvrir
+                    <ChevronRight size={15} />
+                  </button>
+                </li>
+              );
+            })}
+
+            {partiels.map(({ offre: o, res }) => (
+              <li key={getIdOffre(o)} className="partial">
+                <span className="ev-check ev-check-off" title="Évaluation incomplète : non sélectionnable" />
+                <span className="ev-rank">–</span>
+                <div className="ev-rank-info">
+                  <strong>{nomSoumissionnaire(o)}</strong>
+                  <small>Non classé : évaluation incomplète</small>
+                  <span className="ev-chip progress">
+                    Partielle {res.nombreNotes}/{res.totalCriteres}
+                  </span>
+                </div>
+                <div className="ev-rank-score">
+                  <strong>{formatScore(res.score)}</strong>
+                  <span>/ 20</span>
+                </div>
+                <button
+                  type="button"
+                  className="ev-btn ev-btn-soft"
+                  onClick={() => onOpen(o)}
+                  disabled={detailLoading}
+                >
+                  Ouvrir
+                  <ChevronRight size={15} />
+                </button>
+              </li>
+            ))}
+          </ol>
+
+          {nonNotees > 0 && (
+            <p className="ev-empty-inline ev-m">{nonNotees} offre(s) pas encore notée(s).</p>
+          )}
+        </>
+      )}
+
+      <div className="ev-validate">
+        <div>
+          <span>Validation</span>
+          <strong>{aide}</strong>
+        </div>
+        <button
+          type="button"
+          className="ev-btn ev-btn-primary"
+          onClick={() => onTransmit(g)}
+          disabled={nb === 0 || transmisOk || enCours}
+        >
+          {enCours ? (
+            <>
+              <RefreshCw size={16} className="ev-spin" />
+              Transmission…
+            </>
+          ) : transmisOk ? (
+            <>
+              <Lock size={16} />
+              Transmis
+            </>
+          ) : (
+            <>
+              <Send size={16} />
+              Transmettre la sélection{nb > 0 ? ` (${nb})` : ""}
+            </>
+          )}
+        </button>
+      </div>
+    </section>
   );
 }
 

@@ -2,12 +2,22 @@ package com.example.backend.service;
 
 import com.example.backend.entity.AppelOffre;
 import com.example.backend.entity.AppelOffreCritere;
+import com.example.backend.entity.Marche;
+import com.example.backend.entity.Offre;
+import com.example.backend.entity.PieceDepot;
 import com.example.backend.entity.Utilisateur;
 import com.example.backend.repository.AppelOffreCritereRepository;
 import com.example.backend.repository.AppelOffreRepository;
+import com.example.backend.repository.JalonRepository;
+import com.example.backend.repository.MarcheRepository;
+import com.example.backend.repository.NoterRepository;
+import com.example.backend.repository.OffreRepository;
+import com.example.backend.repository.PieceDepotRepository;
+import com.example.backend.repository.ValidationAttributionRepository;
 import com.example.backend.repository.PieceRequiseRepository;
 import com.example.backend.repository.UtilisateurRepository;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
@@ -16,6 +26,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -30,19 +44,40 @@ public class AppelOffreService {
     private final PieceRequiseRepository pieceRepository;
     private final AppelOffreCritereRepository critereRepository;
     private final PhotoAppelOffreService photoService;
+    private final OffreRepository offreRepository;
+    private final NoterRepository noterRepository;
+    private final ValidationAttributionRepository validationRepository;
+    private final MarcheRepository marcheRepository;
+    private final JalonRepository jalonRepository;
+    private final PieceDepotRepository pieceDepotRepository;
+
+    @Value("${app.upload.dir:uploads/offres}")
+    private String uploadDir;
 
     public AppelOffreService(
             AppelOffreRepository appelOffreRepository,
             UtilisateurRepository utilisateurRepository,
             PieceRequiseRepository pieceRepository,
             AppelOffreCritereRepository critereRepository,
-            PhotoAppelOffreService photoService) {
+            PhotoAppelOffreService photoService,
+            OffreRepository offreRepository,
+            NoterRepository noterRepository,
+            ValidationAttributionRepository validationRepository,
+            MarcheRepository marcheRepository,
+            JalonRepository jalonRepository,
+            PieceDepotRepository pieceDepotRepository) {
 
         this.appelOffreRepository = appelOffreRepository;
         this.utilisateurRepository = utilisateurRepository;
         this.pieceRepository = pieceRepository;
         this.critereRepository = critereRepository;
         this.photoService = photoService;
+        this.offreRepository = offreRepository;
+        this.noterRepository = noterRepository;
+        this.validationRepository = validationRepository;
+        this.marcheRepository = marcheRepository;
+        this.jalonRepository = jalonRepository;
+        this.pieceDepotRepository = pieceDepotRepository;
     }
 
     private ResponseStatusException erreur(
@@ -393,18 +428,48 @@ public class AppelOffreService {
         return appelOffreRepository.save(appel);
     }
 
-    // 10. Suppression (brouillon uniquement) : pièces, anciens critères et photos
-    //     sont supprimés avec l'appel pour ne pas bloquer sur les clés étrangères.
+    // 10. Suppression TOTALE, quel que soit le statut (brouillon, publié,
+    //     clôturé, annulé, attribué). Tout ce qui dépend de l'appel est supprimé
+    //     dans l'ordre des clés étrangères :
+    //     notes -> validations -> jalons -> marchés -> pièces déposées ->
+    //     offres -> pièces requises -> critères -> photos -> appel.
+    //     Les fichiers physiques sont supprimés après la transaction réussie.
     public void supprimer(Long id) {
 
         AppelOffre appel = trouver(id);
 
-        if (!"BROUILLON".equalsIgnoreCase(appel.getStatut())) {
-            throw erreur(
-                    HttpStatus.CONFLICT,
-                    "Seul un brouillon peut être supprimé."
-            );
+        List<String> fichiers = new java.util.ArrayList<>();
+
+        List<Offre> offres = offreRepository
+                .findByAppelOffre_IdAppelOffreOrderByDateDepotDesc(id);
+
+        for (Offre offre : offres) {
+
+            Long idOffre = offre.getIdOffre();
+
+            noterRepository.deleteByOffre_IdOffre(idOffre);
+            validationRepository.deleteByOffre_IdOffre(idOffre);
+
+            for (Marche marche : marcheRepository.findByOffre_IdOffre(idOffre)) {
+                jalonRepository.deleteByMarche_IdMarche(marche.getIdMarche());
+                marcheRepository.delete(marche);
+            }
+
+            for (PieceDepot depot : pieceDepotRepository
+                    .findByOffre_IdOffreOrderByIdPieceDepotAsc(idOffre)) {
+                fichiers.add(depot.getCheminFichier());
+                pieceDepotRepository.delete(depot);
+            }
+
+            fichiers.add(offre.getCinRecto());
+            fichiers.add(offre.getCinVerso());
+            fichiers.add(offre.getOffreTechnique());
+            fichiers.add(offre.getOffreFinanciere());
+
+            offreRepository.delete(offre);
         }
+
+        offreRepository.flush();
 
         pieceRepository.deleteByAppelOffre_IdAppelOffre(id);
 
@@ -415,6 +480,36 @@ public class AppelOffreService {
         photoService.supprimerToutes(id);
 
         appelOffreRepository.delete(appel);
+        appelOffreRepository.flush();
+
+        // Nettoyage des fichiers uniquement si la base a bien été mise à jour
+        org.springframework.transaction.support.TransactionSynchronizationManager
+                .registerSynchronization(
+                        new org.springframework.transaction.support
+                                .TransactionSynchronization() {
+                            @Override
+                            public void afterCommit() {
+                                fichiers.forEach(
+                                        AppelOffreService.this::supprimerFichierOffre);
+                            }
+                        });
+    }
+
+    // Suppression silencieuse d'un fichier déposé (chemin relatif à app.upload.dir)
+    private void supprimerFichierOffre(String cheminRelatif) {
+
+        if (cheminRelatif == null || cheminRelatif.isBlank()) return;
+
+        try {
+            Path base = Paths.get(uploadDir).toAbsolutePath().normalize();
+            Path fichier = base.resolve(cheminRelatif).normalize();
+
+            if (fichier.startsWith(base)) {
+                Files.deleteIfExists(fichier);
+            }
+        } catch (IOException | RuntimeException ignored) {
+            // Un fichier manquant ou verrouillé ne doit pas bloquer la suppression.
+        }
     }
 
     // 11. Recherche
